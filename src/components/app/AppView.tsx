@@ -9,6 +9,7 @@ import { FileDiffPanel } from "../FileDiffPanel.js";
 import { HeaderLogo, HeaderStatus } from "../Header.js";
 import { BenchmarkManager } from "../BenchmarkManager.js";
 import { McpManager } from "../McpManager.js";
+import { RemoteManager } from '../RemoteManager.js';
 import { MemoryManager } from '../MemoryManager.js';
 import { ApprovalModeMenu, CommandMenu, ConvoMenu, ManualWorkflowMenu, ModelMenu, QueueMenu } from "../Menus.js";
 import { readClipboardText, saveClipboardImage } from "../pasted-images.js";
@@ -59,8 +60,13 @@ export function AppView({ model }: { model: AppController }) {
   const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
   const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - extraWorkingRows - 1);
 
+  if (model.remoteOpen) return <RemoteManager width={terminalColumns} height={Math.max(1, terminalRows - 1)}
+    status={model.remoteStatus} logs={model.remoteLogs} pairing={model.remotePairing} conflict={model.remoteConflict} error={model.remoteError}
+    onStart={model.startRemote} onStop={model.stopRemote} onPair={model.renewRemotePairing}
+    onClose={() => { model.setRemoteOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
+
   if (model.benchmarkOpen) return <BenchmarkManager width={terminalColumns} height={Math.max(1, terminalRows - 1)}
-    canStart={() => model.jobs.current.size || model.sideAbort.current || model.titleAborts.current.size || model.shells.current.size || model.remoteHost.current || [...model.sessionRecords.current.values()].some(record => record.deferredTurn || record.queuedPrompts?.length || model.promptQueue.current.operations(record.id).length)
+    canStart={() => model.jobs.current.size || model.sideAbort.current || model.titleAborts.current.size || model.shells.current.size || model.remoteHost.current || model.remoteStatus === 'Starting…' || [...model.sessionRecords.current.values()].some(record => record.deferredTurn || record.queuedPrompts?.length || model.promptQueue.current.operations(record.id).length)
       ? "Wait for main/side jobs, title jobs, shells, remote host and queued/deferred work to finish before Start. Results remain available." : undefined}
     onClose={() => { model.setBenchmarkOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
 

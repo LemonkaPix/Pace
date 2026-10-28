@@ -15,6 +15,7 @@ import { createPlanningActions } from "./planning-actions.js";
 import { useAppKeyboard } from "./useAppKeyboard.js";
 import { createExecutionActions } from "./execution-actions.js";
 import { createAuxiliaryActions } from "./auxiliary-actions.js";
+import { useRemoteHost } from './useRemoteHost.js';
 import { createSubmit } from "./submit.js";
 import { useDeferredTurns } from "./useDeferredTurns.js";
 import { store, project, orchestrator } from "./runtime.js";
@@ -59,9 +60,11 @@ export function useAppController(onClear: () => void) {
     rememberSession: conversations.rememberSession,
     refreshUsage: usage.refreshUsage,
   });
+  const remote = useRemoteHost({ state, promptQueue: queue.promptQueue,
+    rememberSession: conversations.rememberSession, add: transcript.add });
   const auxiliary = createAuxiliaryActions({
-    ...state, store, project, orchestrator,
-    promptQueue: queue.promptQueue,
+    ...state, orchestrator,
+    handleRemote: remote.handleRemote,
     rememberSession: conversations.rememberSession,
     activity: transcript.activity,
     add: transcript.add,
@@ -77,7 +80,7 @@ export function useAppController(onClear: () => void) {
 
   return {
     ...state, ...routing, ...conversations, ...queue, ...completion, ...transcript, ...keyboard, ...usage,
-    terminalDimensions, workingTip, memoryStatus, submit, onClear,
+    ...remote, terminalDimensions, workingTip, memoryStatus, submit, onClear,
   };
 }
 
