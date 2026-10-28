@@ -12,6 +12,9 @@ import * as usage from "../src/integrations/usage.js";
 import * as npmVersion from "../src/core/npm-version.js";
 import * as skills from "../src/core/system/skills.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
+import * as memoryConfig from '../src/core/memory/config.js';
+import * as globalMemory from '../src/core/memory/global.js';
+import { memorySetupService } from '../src/core/memory/setup.js';
 
 vi.mock("../src/benchmark/preferences.js",()=>({loadPreferences:async()=>undefined,savePreferences:async()=>{},baselineChoices:async()=>[]}));
 
@@ -33,6 +36,8 @@ afterEach(() => {
 });
 
 async function mount() {
+  vi.spyOn(memoryConfig, 'loadMemory').mockResolvedValue({ state: 'unconfigured' });
+  vi.spyOn(globalMemory, 'loadGlobalMemory').mockResolvedValue({});
   vi.spyOn(PaceStore.prototype, "loadConfig").mockResolvedValue({ ...structuredClone(DEFAULT_CONFIG), skillFolder: null });
   vi.spyOn(PaceStore.prototype, "listProjects").mockResolvedValue([]);
   const save = vi.spyOn(PaceStore.prototype, "saveChanges").mockResolvedValue();
@@ -223,4 +228,26 @@ it('planning displays native tasks and interactive questions, and keeps output i
   ui.stdin.write('\r'); await ui.instance.waitUntilRenderFlush();
   await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Plan choice recorded'));
   expect(turn).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { repo: true, global: false, enabled: true },
+  { repo: false, global: true, enabled: true },
+  { repo: true, global: true, enabled: true },
+  { repo: false, global: false, enabled: false },
+])('shows Memory Enabled beneath the composer for repo=$repo global=$global', async ({ repo, global, enabled }) => {
+  const ui = await mount();
+  vi.mocked(memoryConfig.loadMemory).mockResolvedValue({ state: repo ? 'ready' : 'disabled', config: { enabled: repo } as memoryConfig.MemoryConfig });
+  vi.mocked(globalMemory.loadGlobalMemory).mockResolvedValue({ config: { version: 1, revision: '11111111-1111-4111-8111-111111111111', enabled: global, content: 'Prefer Polish.' } });
+  vi.spyOn(memorySetupService, 'load').mockResolvedValue({ state: 'unconfigured' });
+  vi.spyOn(memorySetupService, 'loadGlobal').mockResolvedValue({});
+  ui.stdout.writes.length = 0;
+  await ui.submit('/memory');
+  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Set up project memory'));
+  ui.stdout.writes.length = 0; ui.stdin.write('\x1b');
+  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Ask Pace or type /'));
+  await ui.instance.waitUntilRenderFlush();
+  const output = ui.stdout.writes.join('');
+  expect(output.includes('Memory Enabled')).toBe(enabled);
+  if (enabled) expect(output.indexOf('Memory Enabled')).toBeGreaterThan(output.indexOf('Ask Pace or type /'));
 });

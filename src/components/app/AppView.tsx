@@ -55,7 +55,7 @@ export function AppView({ model }: { model: AppController }) {
   const terminalColumns = terminalDimensions.columns;
   const terminalRows = terminalDimensions.rows;
   const contentWidth = Math.max(20, terminalColumns - 2);
-  const composerChromeRows = contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5;
+  const composerChromeRows = (contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5) + (model.memoryStatus.enabled ? 1 : 0);
   const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
   const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - extraWorkingRows - 1);
 
@@ -104,7 +104,7 @@ export function AppView({ model }: { model: AppController }) {
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
       {session?.deferredTurn && !busy ? <Text color="#FBBF24">Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
       </Box>
-      <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
+      <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode} memoryEnabled={model.memoryStatus.enabled} memoryUnavailable={model.memoryStatus.unavailable}>
         <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={(value, opts) => { void submit(value, opts); }} history={history}
           onImagePaste={async () => {
             try {

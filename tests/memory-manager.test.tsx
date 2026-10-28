@@ -11,7 +11,7 @@ const config: MemoryConfig = { version: 1, id: '11111111-1111-4111-8111-11111111
 const instances: ReturnType<typeof render>[] = [];
 afterEach(() => { for (const instance of instances.splice(0)) instance.unmount(); });
 async function mount(state: MemoryState = { state: 'unconfigured' }) {
-  const service = { load: vi.fn().mockResolvedValue(state), detect: vi.fn().mockResolvedValue({ executable: '/bin/basic-memory', uv: '/bin/uv' }), install: vi.fn().mockResolvedValue('/bin/basic-memory'), check: vi.fn().mockResolvedValue(undefined), setup: vi.fn().mockResolvedValue(config), repair: vi.fn().mockResolvedValue(config), toggle: vi.fn(async (value, enabled) => ({ ...value, enabled })) } as unknown as MemorySetupService;
+  const service = { load: vi.fn().mockResolvedValue(state), loadGlobal: vi.fn().mockResolvedValue({}), saveGlobal: vi.fn(async input => ({ ...input, version: 1, revision: config.revision })), detect: vi.fn().mockResolvedValue({ executable: '/bin/basic-memory', uv: '/bin/uv' }), install: vi.fn().mockResolvedValue('/bin/basic-memory'), check: vi.fn().mockResolvedValue(undefined), setup: vi.fn().mockResolvedValue(config), repair: vi.fn().mockResolvedValue(config), toggle: vi.fn(async (value, enabled) => ({ ...value, enabled })) } as unknown as MemorySetupService;
   const stdout = new Terminal(), stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {}, ref() {}, unref() {} }), onClose = vi.fn();
   const instance = render(<MemoryManager project="/project" baseDir="/store" width={120} height={38} service={service} onClose={onClose}/>, { stdin, stdout, stderr: new PassThrough(), patchConsole: false, alternateScreen: false, maxFps: 1000 }); instances.push(instance);
   const settle = async () => { await new Promise(resolve => setTimeout(resolve, 10)); await instance.waitUntilRenderFlush(); };
@@ -43,4 +43,22 @@ it('distinguishes incomplete setup and cancels pending installation on unmount',
   let signal: AbortSignal | undefined;
   vi.mocked(ui.service.install).mockImplementation(async (_uv, _base, abort) => { signal = abort; await new Promise((_resolve, reject) => abort?.addEventListener('abort', () => reject(new Error('cancelled')))); return ''; });
   await ui.send('\r'); expect(signal?.aborted).toBe(false); ui.instance.unmount(); expect(signal?.aborted).toBe(true); expect(ui.service.setup).not.toHaveBeenCalled();
+});
+
+it('enables and edits global-only preferences without installing the repo backend', async () => {
+  const ui = await mount(); await ui.send('\x1b[B'); await ui.send('\r');
+  expect(ui.frame()).toContain('Global memory · user preferences');
+  await ui.send('\r');
+  expect(ui.service.saveGlobal).toHaveBeenCalledWith({ enabled: true, content: '' }, '/store', null);
+  await ui.send('\x1b[B'); await ui.send('\r'); await ui.send('Use Polish; ask before publishing.'); await ui.send('\r');
+  expect(ui.service.saveGlobal).toHaveBeenLastCalledWith({ enabled: true, content: 'Use Polish; ask before publishing.' }, '/store', config.revision);
+  await ui.send('\r');
+  expect(ui.service.saveGlobal).toHaveBeenLastCalledWith({ enabled: false, content: 'Use Polish; ask before publishing.' }, '/store', config.revision);
+  expect(ui.service.install).not.toHaveBeenCalled(); expect(ui.service.setup).not.toHaveBeenCalled(); expect(ui.service.detect).not.toHaveBeenCalled();
+});
+
+it('cancels a global preference edit without replacing the saved card', async () => {
+  const ui = await mount(); await ui.send('\x1b[B'); await ui.send('\r');
+  await ui.send('\x1b[B'); await ui.send('\r'); await ui.send('Unsubmitted preferences'); await ui.send('\x1b');
+  expect(ui.service.saveGlobal).not.toHaveBeenCalled(); expect(ui.onClose).not.toHaveBeenCalled();
 });

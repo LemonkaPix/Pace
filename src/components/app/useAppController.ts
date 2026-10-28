@@ -2,6 +2,7 @@ import { useApp } from "ink";
 import { useAppState } from "./useAppState.js";
 import { useTerminalDimensions } from "./useTerminalDimensions.js";
 import { useWorkingTip } from "./useWorkingTip.js";
+import { useMemoryStatus } from './useMemoryStatus.js';
 import { useConversations } from "./useConversations.js";
 import { createTranscriptActions } from "./transcript-actions.js";
 import { usePromptQueue } from "./usePromptQueue.js";
@@ -26,6 +27,7 @@ export function useAppController(onClear: () => void) {
     state.setTranscriptRevision(value => value + 1);
   });
   const workingTip = useWorkingTip(state.busy, state.session?.id);
+  const memoryStatus = useMemoryStatus(state.session?.projectPath, store.baseDir, state.memoryOpen, state.busy);
   const conversations = useConversations(state);
   const transcript = createTranscriptActions({ ...state, store });
   const queue = usePromptQueue({ state, transcript });
@@ -75,7 +77,7 @@ export function useAppController(onClear: () => void) {
 
   return {
     ...state, ...routing, ...conversations, ...queue, ...completion, ...transcript, ...keyboard, ...usage,
-    terminalDimensions, workingTip, submit, onClear,
+    terminalDimensions, workingTip, memoryStatus, submit, onClear,
   };
 }
 

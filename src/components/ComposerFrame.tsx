@@ -10,12 +10,14 @@ export function contextLabel(session: Session | undefined): string {
   return `${gauge} Context ${percent === undefined ? "?" : `${percent}%`}`;
 }
 
-export function ComposerFrame({ children, width, session, shellMode, approvalMode = "request-approval" }: {
+export function ComposerFrame({ children, width, session, shellMode, approvalMode = "request-approval", memoryEnabled = false, memoryUnavailable = false }: {
   children: React.ReactNode;
   width: number;
   session?: Session;
   shellMode: boolean;
   approvalMode?: ApprovalMode;
+  memoryEnabled?: boolean;
+  memoryUnavailable?: boolean;
 }) {
   const theme = getTheme(session?.kind);
   const isPlanning = session?.kind === "planning";
@@ -42,6 +44,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
         {width < 50 ? <Box flexDirection="column"><Text color={theme.muted} wrap="truncate">{`${isPlanning ? "[PLAN] " : ""}${contextLabel(session)} · ${mode}`}</Text><Text color={theme.muted} wrap="truncate">{`Approval: ${approval}`}</Text></Box>
           : <Box flexShrink={0}><Text color={theme.muted} wrap="truncate">{details}</Text></Box>}
       </Box>
+      {memoryEnabled ? <Text color={memoryUnavailable ? '#FBBF24' : '#59E6A7'} wrap="truncate">Memory Enabled{memoryUnavailable ? ' · connection/configuration unavailable' : ''}</Text> : null}
     </Box>
   );
 }
