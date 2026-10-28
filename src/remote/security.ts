@@ -97,13 +97,79 @@ export class RemoteIdentity {
   }
 }
 
-export async function remoteLock(baseDir: string): Promise<() => Promise<void>> {
+export class RemoteLockError extends Error {
+  constructor(readonly owner: string) {
+    super('Remote host already owns this Pace store. Choose whether to override the remote session.');
+  }
+  get pid(): number | undefined {
+    try {
+      const value = JSON.parse(this.owner);
+      const pid = typeof value === 'number' ? value : value.pid;
+      return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+    } catch { return undefined; }
+  }
+}
+
+/** Only the confirmed owner can be replaced; never signal an unrelated Pace process. */
+export async function overrideRemoteLock(baseDir: string, conflict: RemoteLockError): Promise<void> {
+  const path = join(baseDir, 'remote', 'host.lock');
+  const guard = `${path}.takeover`;
+  await writeFile(guard, '', { flag: 'wx', mode: 0o600 });
+  try {
+    const owner = await readFile(path, 'utf8').catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (owner === undefined) return;
+    if (owner !== conflict.owner) throw new Error('Remote host owner changed. Reopen /remote to confirm the new owner.');
+    if (!conflict.pid) throw new Error('Cannot verify the recorded PID. Inspect remote/host.lock before removing it manually.');
+    let alive = true;
+    try { process.kill(conflict.pid, 0); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false; else throw error; }
+    if (!alive) { await rm(path); return; }
+    const record = JSON.parse(owner);
+    if (typeof record.stop !== 'string' || !/^[a-f0-9]{32}$/.test(record.stop))
+      throw new Error(`PID ${conflict.pid} is running an older host without graceful takeover. Stop its remote host there, then retry here.`);
+    const request = `${path}.stop-${record.stop}`;
+    await writeFile(request, '', { mode: 0o600 });
+    try {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        const current = await readFile(path, 'utf8').catch(error => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+          throw error;
+        });
+        if (current === undefined) return;
+        if (current !== owner) throw new Error('Remote host owner changed. Reopen /remote to confirm the new owner.');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      throw new Error('Previous host is still stopping. Retry after its active work finishes.');
+    } finally { await rm(request, { force: true }); }
+  } finally { await rm(guard, { force: true }); }
+}
+
+export async function remoteLock(baseDir: string, onOverride?: () => Promise<void>): Promise<() => Promise<void>> {
   await mkdir(join(baseDir, 'remote'), { recursive: true, mode: 0o700 });
   const path = join(baseDir, 'remote', 'host.lock');
-  try { await writeFile(path, String(process.pid), { flag: 'wx', mode: 0o600 }); }
+  const stop = randomBytes(16).toString('hex');
+  const owner = JSON.stringify({ pid: process.pid, id: stop, ...(onOverride ? { stop } : {}) });
+  try { await writeFile(path, owner, { flag: 'wx', mode: 0o600 }); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Remote host already owns this Pace store. If it crashed, verify the recorded PID before removing ~/.pace/remote/host.lock.');
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new RemoteLockError(await readFile(path, 'utf8'));
     throw error;
   }
-  return () => rm(path, { force: true });
+  const request = `${path}.stop-${stop}`;
+  let checking = false;
+  const timer = onOverride ? setInterval(() => {
+    if (checking) return;
+    checking = true;
+    void readFile(request).then(() => onOverride()).catch(() => {}).finally(() => { checking = false; });
+  }, 100) : undefined;
+  timer?.unref();
+  return async () => {
+    if (timer) clearInterval(timer);
+    // A late close must never remove a successor's lock.
+    if (await readFile(path, 'utf8').catch(() => undefined) === owner) await rm(path, { force: true });
+    await rm(request, { force: true });
+  };
 }

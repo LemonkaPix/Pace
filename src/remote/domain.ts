@@ -54,13 +54,17 @@ export class RemoteDomain {
   private readonly previousTurn: Orchestrator["turn"];
   private readonly observedTurn: Orchestrator["turn"];
 
-  constructor(private readonly store: PaceStore, private readonly orchestrator: Orchestrator, projects: readonly string[], private readonly bridge?: RemoteBridge) {
+  constructor(private readonly store: PaceStore, private readonly orchestrator: Orchestrator, projects: readonly string[], private readonly bridge?: RemoteBridge, private readonly onLog?: (message: string) => void) {
     for (const path of projects) this.roots.set(projectKey(path), resolve(path));
     this.previousTurn = orchestrator.turn.bind(orchestrator);
     this.observedTurn = (async (prompt, session, config, callback, signal, activate, intent, displayPrompt, queuedOperation) => {
+      this.log(`[${session.id}] Turn started: ${prompt}`);
       const active = { prompt, status: "Starting…", activities: [] as string[] };
       this.sessions.set(session.id, session); this.active.set(session.id, active); this.emit(session);
       const progress = Object.assign((event: Parameters<typeof callback>[0]) => {
+        if (this.onLog) {
+          try { this.log(`[${session.id}] ${JSON.stringify(event)}`); } catch { /* Non-serializable diagnostics cannot interrupt a turn. */ }
+        }
         if (event.kind === "status") active.status = event.text.slice(0, 500);
         if (event.kind === "activity") active.activities = [...active.activities.slice(-39), event.title.slice(0, 200)];
         if (event.kind === "approval") this.addInteraction(session, { id: randomUUID(), kind: "approval", command: event.command.slice(0, 16000), ...(event.cwd ? { cwd: event.cwd.slice(0, 1000) } : {}), ...(event.reason ? { reason: event.reason.slice(0, 2000) } : {}), ...(event.network === undefined ? {} : { network: event.network }) }, event.respond);
@@ -71,8 +75,13 @@ export class RemoteDomain {
       const controller = signal ? undefined : new AbortController();
       if (controller) this.controllers.set(session.id, controller);
       let completed = false;
-      try { const outcome = await this.previousTurn(prompt, session, config, progress, signal ?? controller!.signal, activate, intent, displayPrompt, queuedOperation); completed = true; return outcome; }
+      try {
+        const outcome = await this.previousTurn(prompt, session, config, progress, signal ?? controller!.signal, activate, intent, displayPrompt, queuedOperation);
+        this.log(`[${session.id}] Turn result: ${outcome.result}`);
+        completed = true; return outcome;
+      } catch (error) { this.log(`[${session.id}] Turn failed: ${String(error)}`); throw error; }
       finally {
+        this.log(`[${session.id}] Turn ${completed ? 'finished' : signal?.aborted || controller?.signal.aborted ? 'cancelled' : 'stopped'}`);
         if (controller) this.controllers.delete(session.id);
         this.active.delete(session.id);
         for (const [id, item] of this.interactions) if (item.sessionId === session.id) this.removeInteraction(id);
@@ -84,6 +93,7 @@ export class RemoteDomain {
   }
 
   subscribe(listener: (event: RemoteEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private log(message: string): void { try { this.onLog?.(message); } catch { /* Logging cannot interrupt a turn. */ } }
   /** Resume queued operations after session loading has recovered interrupted attempts. */
   async resumeQueues(): Promise<void> {
     if (this.bridge) return;
@@ -292,7 +302,7 @@ export class RemoteDomain {
           latest.queuedPrompts = latest.queuedPrompts?.filter(value => typeof value === "string" || value.id !== item.id);
         }, false);
         completed = true;
-      } catch (error) { this.launchErrors.set(source.id, String(error)); this.emit(source); }
+      } catch (error) { this.log(`[${source.id}] Operation failed: ${String(error)}`); this.launchErrors.set(source.id, String(error)); this.emit(source); }
       finally { this.pendingLaunch.delete(source.id); if (completed && !this.disposed) await this.drain(source); }
     })();
     this.launches.add(work);

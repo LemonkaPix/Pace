@@ -9,10 +9,13 @@ import { MAX_MESSAGE_BYTES, VERSION, parseRequest, type Pairing, type Response }
 import { isPrivateAddress, lanAddresses, remoteLock, RemoteIdentity } from './security.js';
 import type { RemoteDomain } from './domain.js';
 
-export type RemoteHost = { address: string; pairing: Pairing; close(): Promise<void> };
-export async function startRemoteHost(options: { baseDir: string; address: string; port?: number; domain: RemoteDomain; advertise?: boolean; allowTestAddress?: boolean }): Promise<RemoteHost> {
+export type RemoteLog = { kind: 'host' | 'paired' | 'connected' | 'disconnected' | 'request' | 'response' | 'error' | 'event'; message: string };
+export type RemoteHost = { address: string; pairing: Pairing; close(): Promise<void>; newPairing(): Pairing };
+export async function startRemoteHost(options: { baseDir: string; address: string; port?: number; domain: RemoteDomain; advertise?: boolean; allowTestAddress?: boolean; onLog?: (event: RemoteLog) => void; onClose?: () => void }): Promise<RemoteHost> {
   if (!isPrivateAddress(options.address) || (!options.allowTestAddress && !lanAddresses().includes(options.address))) throw new Error('Choose a private IPv4 address assigned to this computer.');
-  const release = await remoteLock(options.baseDir);
+  const log = (kind: RemoteLog['kind'], message: string) => { try { options.onLog?.({ kind, message }); } catch { /* Observers cannot disrupt transport. */ } };
+  let closeHost: (() => Promise<void>) | undefined;
+  const release = await remoteLock(options.baseDir, async () => { if (closeHost) { log('host', 'Remote session overridden by another Pace host.'); await closeHost(); } });
   let server: Server | undefined;
   let bonjour: Bonjour | undefined;
   let sockets: WebSocketServer | undefined;
@@ -33,21 +36,22 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
     };
     server = createServer({ key: identity.key, cert: identity.cert, minVersion: 'TLSv1.3', maxVersion: 'TLSv1.3', requestCert: true, rejectUnauthorized: false, sessionTimeout: 1 }, async (request, response) => {
       response.setHeader('Cache-Control', 'no-store');
-      if (!allowed(request)) { response.writeHead(403).end(); return; }
-      if (request.method !== 'POST' || request.url !== '/pair') { response.writeHead(401).end(); return; }
-      if (Number(request.headers['content-length']) > 4096) { response.writeHead(413).end(); return; }
+      if (!allowed(request)) { log('error', 'HTTP request denied (address or rate limit).'); response.writeHead(403).end(); return; }
+      if (request.method !== 'POST' || request.url !== '/pair') { log('error', 'HTTP request denied (invalid pairing endpoint).'); response.writeHead(401).end(); return; }
+      if (Number(request.headers['content-length']) > 4096) { log('error', 'Pairing request exceeds size limit.'); response.writeHead(413).end(); return; }
       try {
         let size = 0;
         const chunks: Buffer[] = [];
         for await (const chunk of request) {
           size += chunk.length;
-          if (size > 4096) { response.writeHead(413).end(); request.destroy(); return; }
+          if (size > 4096) { log('error', 'Pairing request exceeds size limit.'); response.writeHead(413).end(); request.destroy(); return; }
           chunks.push(chunk);
         }
         const parsed = z.object({ v: z.literal(VERSION), token: z.string().regex(/^[a-f0-9]{64}$/), name: z.string().min(1).max(80) }).strict().parse(JSON.parse(Buffer.concat(chunks).toString()));
         const device = await identity.enroll(request.socket as TLSSocket, parsed.token, parsed.name);
+        log('paired', `Device paired: ${device.name} (${device.id}).`);
         response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ v: VERSION, deviceId: device.id }));
-      } catch { response.writeHead(401).end(); }
+      } catch { log('error', 'Pairing denied (invalid, expired, or consumed code / certificate).'); response.writeHead(401).end(); }
     });
     server.requestTimeout = 10000; server.headersTimeout = 10000; server.maxConnections = 16;
     sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES, perMessageDeflate: false, handleProtocols: protocols => protocols.has('pace-remote-v1') ? 'pace-remote-v1' : false });
@@ -55,20 +59,23 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
     server.on('upgrade', (request, socket, head) => {
       const id = identity.authorized(request.socket as TLSSocket);
       if (!allowed(request) || !id || request.url !== '/remote' || request.headers['sec-websocket-protocol'] !== 'pace-remote-v1' || request.headers.origin) {
+        log('error', 'WebSocket connection denied.');
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
       }
       sockets!.handleUpgrade(request, socket, head, ws => {
         const client = { id, socket: request.socket as TLSSocket, pending: 0, alive: true };
         clients.set(ws, client);
-        ws.on('error', () => {});
-        ws.on('close', () => clients.delete(ws));
+        log('connected', `Device connected: ${id}.`);
+        ws.on('error', error => log('error', `WebSocket error: ${error.message}`));
+        ws.on('close', code => { clients.delete(ws); log('disconnected', `Device disconnected: ${id} (code ${code}).`); });
         ws.on('pong', () => { client.alive = true; });
         ws.on('message', async (message, binary) => {
-          if (binary || ++client.pending > 8 || !allowed(request) || identity.authorized(client.socket) !== id) { ws.close(1008); return; }
+          if (binary || ++client.pending > 8 || !allowed(request) || identity.authorized(client.socket) !== id) { log('error', `Device request denied: ${id} (protocol, rate, or authorization).`); ws.close(1008); return; }
           let requestId = '00000000-0000-4000-8000-000000000000';
           try {
             const request = parseRequest(JSON.parse(message.toString()));
             requestId = request.id;
+            log('request', `${id} → ${request.method} (${requestId})${'sessionId' in request.params ? ` session ${request.params.sessionId}` : ''}`);
             let data: unknown;
             if (request.method === 'devices.list') data = identity.list();
             else if (request.method === 'devices.revoke') {
@@ -78,9 +85,11 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
               data = { revoked: true };
             } else data = await options.domain.handle(request, id);
             send(ws, { v: VERSION, id: requestId, ok: true, data });
+            log('response', `${requestId} completed.`);
           } catch (error) {
             const message = error instanceof z.ZodError || error instanceof SyntaxError ? 'Invalid request or protocol version' : error instanceof Error ? error.message : 'Operation failed';
             send(ws, { v: VERSION, id: requestId, ok: false, error: { code: error instanceof z.ZodError ? 'INVALID_REQUEST' : 'CONFLICT', message: message.slice(0, 500) } });
+            log('error', `${requestId} failed: ${message}`);
           } finally { client.pending--; }
         });
       });
@@ -88,21 +97,23 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
     function send(ws: WebSocket, value: Response | unknown): void {
       const data = JSON.stringify(value);
       if (Buffer.byteLength(data) > MAX_MESSAGE_BYTES) {
+        log('error', 'Response exceeds 1 MiB; request a smaller page.');
         const response = value as Response;
         if ('id' in response) ws.send(JSON.stringify({ v: VERSION, id: response.id, ok: false, error: { code: 'LIMIT', message: 'Response exceeds 1 MiB; request a smaller page.' } }));
         return;
       }
       if (ws.readyState === WebSocket.OPEN) {
-        if (ws.bufferedAmount > MAX_MESSAGE_BYTES * 2) ws.close(1013, 'Refresh snapshot after reconnect');
+        if (ws.bufferedAmount > MAX_MESSAGE_BYTES * 2) { log('error', 'Slow client disconnected; refresh snapshot after reconnect.'); ws.close(1013, 'Refresh snapshot after reconnect'); }
         else ws.send(data);
       }
     }
     unsubscribe = options.domain.subscribe(event => {
+      log('event', `Session changed: ${event.sessionId} (${event.cursor}).`);
       for (const [ws, client] of clients) if (identity.authorized(client.socket) === client.id) send(ws, event);
     });
     heartbeat = setInterval(() => {
       for (const [ws, client] of clients) {
-        if (!client.alive || identity.authorized(client.socket) !== client.id) { ws.terminate(); continue; }
+        if (!client.alive || identity.authorized(client.socket) !== client.id) { log('error', `Device heartbeat or authorization lost: ${client.id}.`); ws.terminate(); continue; }
         client.alive = false; ws.ping();
       }
     }, 20000);
@@ -116,21 +127,33 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
       bonjour = new Bonjour(undefined, () => {});
       bonjour.publish({ name: `Pace ${hostname()}`, type: 'pace-remote', protocol: 'tcp', port, host: hostname(), txt: { v: String(VERSION) } });
     }
-    let closed = false;
-    return {
-      address: `https://${options.address}:${port}`,
-      pairing: { v: VERSION, address: `https://${options.address}:${port}`, fingerprint: identity.hostFingerprint, ...identity.newCode() },
-      async close() {
-        if (closed) return; closed = true;
-        identity.invalidateCode(); unsubscribe?.(); if (heartbeat) clearInterval(heartbeat);
-        bonjour?.unpublishAll(); bonjour?.destroy();
-        for (const ws of clients.keys()) ws.terminate();
-        sockets?.close();
-        await options.domain.close();
-        await new Promise<void>(resolve => server!.close(() => resolve()));
-        await release();
+    server.on('error', error => log('error', `Host transport error: ${error.message}`));
+    server.on('tlsClientError', error => log('error', `TLS connection failed: ${error.message}`));
+    let closing: Promise<void> | undefined;
+    const address = `https://${options.address}:${port}`;
+    const newPairing = (): Pairing => ({ v: VERSION, address, fingerprint: identity.hostFingerprint, ...identity.newCode() });
+    const host: RemoteHost = {
+      address,
+      pairing: newPairing(),
+      newPairing() { log('host', 'New one-time pairing code created (valid for 2 minutes).'); return host.pairing = newPairing(); },
+      close() {
+        return closing ??= (async () => {
+          log('host', 'Remote host stopping.');
+          identity.invalidateCode(); unsubscribe?.(); if (heartbeat) clearInterval(heartbeat);
+          bonjour?.unpublishAll(); bonjour?.destroy();
+          for (const ws of clients.keys()) ws.terminate();
+          sockets?.close();
+          await options.domain.close();
+          await new Promise<void>(resolve => server!.close(() => resolve()));
+          await release();
+          log('host', 'Remote host stopped.');
+          options.onClose?.();
+        })();
       },
     };
+    closeHost = () => host.close();
+    log('host', `Remote host listening on ${address}. Pairing code valid for 2 minutes.`);
+    return host;
   } catch (error) {
     unsubscribe?.(); if (heartbeat) clearInterval(heartbeat);
     bonjour?.destroy(); for (const ws of sockets?.clients ?? []) ws.terminate(); sockets?.close(); server?.close();
