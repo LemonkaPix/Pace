@@ -87,14 +87,18 @@ export function useRemoteHost({ state, promptQueue, rememberSession, add }: {
     try {
       await state.remoteHost.current?.close(); state.remoteHost.current = undefined;
       setRemoteStatus('Stopped'); setRemotePairing(undefined);
-    } catch (error) { setRemoteError(String(error)); }
+    } catch (error) {
+      setRemoteError(String(error)); setRemoteStatus('Stop failed');
+      log({ kind: 'error', message: `Could not stop remote host: ${String(error)}` });
+    }
     finally { pending.current = false; }
   };
   const handleRemote = async (text: string) => {
     state.setDraft('');
     if (!/^\/remote(?:\s+stop)?$/.test(text.trim())) { add('error', 'Use /remote or /remote stop.'); return; }
     if (text.trim() === '/remote stop') {
-      await stopRemote(); add('info', state.remoteHost.current ? 'Could not stop remote host; see /remote.' : 'Remote host stopped.'); return;
+      await stopRemote();
+      add(state.remoteHost.current ? 'error' : 'info', state.remoteHost.current ? 'Could not stop remote host; see /remote.' : 'Remote host stopped.'); return;
     }
     state.setRemoteOpen(true);
     if (!state.remoteHost.current) void startRemote();
