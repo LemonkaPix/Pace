@@ -11,6 +11,7 @@ import type { VexRequest } from '../src/core/vex/client.js';
 import { decision, singleVex } from './routing-fixture.js';
 import { checkpointDue } from '../src/core/checkpoint.js';
 import { executePlanPrompt } from '../src/core/orchestrator-helpers.js';
+import { saveGlobalMemory } from '../src/core/memory/global.js';
 
 vi.mock("../src/core/routing/pricing.js", async original => {
   const module = await original<typeof import("../src/core/routing/pricing.js")>();
@@ -45,6 +46,26 @@ it('keeps the existing thread when routing changes model', async () => {
   expect(calls[1]).toMatchObject({ id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } });
   expect(calls[1]?.prompt).not.toContain('Retained conversation:');
   expect((await store.latest('/example/project'))?.turns).toHaveLength(2);
+});
+
+it('starts a fresh thread after global preference changes and disabling, retaining conversation history', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-global-thread-test-'));
+  const project = join(dir, 'repo'); await mkdir(project);
+  const session = newSession(project, 'manual'), store = new PaceStore(join(dir, 'profile'));
+  const run = vi.fn(async (_prompt: string, _project: string, _route: Route, thread?: string) => ({ completed: true, threadId: thread ?? `thread-${run.mock.calls.length}`, result: 'Done' }));
+  const orchestrator = new Orchestrator(store, { run }, singleVex('1:high'));
+  let global = await saveGlobalMemory({ enabled: true, content: 'Prefer Polish.' }, store.baseDir, null);
+  await orchestrator.turn('Inspect the repo', session, { ...config, routingMode: 'manual' }, () => {});
+  const firstThread = session.threadId;
+  session.verifierThreadId = 'old-verifier';
+  global = await saveGlobalMemory({ enabled: true, content: 'Prefer English.' }, store.baseDir, global.revision);
+  await orchestrator.turn('Continue inspecting', session, { ...config, routingMode: 'manual' }, () => {});
+  expect(run.mock.calls[1]?.[3]).toBeUndefined(); expect(session.threadId).not.toBe(firstThread);
+  expect(run.mock.calls[1]?.[0]).toContain('Inspect the repo'); expect(session.verifierThreadId).toBeUndefined();
+  await saveGlobalMemory({ ...global, enabled: false }, store.baseDir, global.revision);
+  await orchestrator.turn('Continue', session, { ...config, routingMode: 'manual' }, () => {});
+  expect(run.mock.calls[2]?.[3]).toBeUndefined();
+  expect(run.mock.calls[2]?.[10]?.global).toBeUndefined();
 });
 
 it('lets Vex route paraphrased implementation follow-ups using conversation state', async () => {

@@ -10,6 +10,8 @@ import { TurnUsage } from "./app-server-usage.js";
 import { registerAppServerRequests } from "./app-server-requests.js";
 import { turnImageInput } from "./image-input.js";
 import { MemoryAccess, memoryTool } from '../core/memory/access.js';
+import { globalMemoryPrompt } from '../core/memory/global.js';
+import { MEMORY_POLICY } from '../core/memory/config.js';
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
 export type CompactionResult = {
@@ -174,6 +176,7 @@ export class AppServerRunner implements CodexRunner {
   ): Promise<Execution> {
     if (signal?.aborted) throw new Error("Turn cancelled");
     const memory = memoryOptions?.scope && !memoryOptions.disabled ? new MemoryAccess(memoryOptions.scope, undefined, signal) : undefined;
+    const globalMemory = !memoryOptions?.disabled ? structuredClone(memoryOptions?.global) : undefined;
     const memoryOverrides: Record<string, unknown> = {};
     const { realpath } = await import("node:fs/promises");
     if (mode === "planning" && !artifactDirectory) throw new Error("Planning requires an artifact directory");
@@ -290,7 +293,7 @@ export class AppServerRunner implements CodexRunner {
       }));
       void init;
       server.notify("initialized", {});
-      if (this.includeVex && (memory || mode === 'side' && !this.createServer)) {
+      if (this.includeVex && (memory || globalMemory?.enabled || mode === 'side' && !this.createServer)) {
         const status = await awaitAbort(server.request('mcpServerStatus/list', {}));
         if (!isRecord(status) || !Array.isArray(status.data)) throw new Error('Cannot verify raw memory MCP isolation');
         for (const item of status.data) if (isRecord(item) && typeof item.name === 'string' && isRecord(item.tools)) {
@@ -299,9 +302,14 @@ export class AppServerRunner implements CodexRunner {
             memoryOverrides[`mcp_servers.${JSON.stringify(item.name)}.enabled`] = false;
         }
       }
-      if (memory && memoryOptions?.recallQuery) {
-        try { const recalled = await memory.recall(memoryOptions.recallQuery); if (recalled) prompt += `\n\n${recalled}`; }
-        catch (error) { await onProgress({ kind: 'system', text: `Project memory degraded: ${String(error)}. Continuing without recall.` }); }
+      if (!memoryOptions?.disabled && (memoryOptions?.recallQuery || !threadId)) {
+        const preferences = globalMemoryPrompt(globalMemory);
+        const parts = preferences ? [preferences] : [];
+        if (memory && memoryOptions?.recallQuery) {
+          try { const recalled = await memory.recall(memoryOptions.recallQuery, MEMORY_POLICY.recallBytes - Buffer.byteLength(preferences) - 2); if (recalled) parts.push(recalled); }
+          catch (error) { await onProgress({ kind: 'system', text: `Project memory degraded: ${String(error)}. Continuing without project recall.` }); }
+        }
+        if (parts.length) prompt += `\n\n${parts.join('\n\n')}`;
       }
       const threadParams: Record<string, unknown> = appServerThreadParams(cwd, route, threadId, mode, approvalMode);
       if (this.permissionsProfile) { delete threadParams.sandbox; threadParams.permissions = this.permissionsProfile; }

@@ -7,6 +7,7 @@ import { registerActiveAttempt, type PaceStore } from "./sessions.js";
 import { costForUsage, PRICE_SNAPSHOT } from "./routing/pricing.js";
 import { updateAgentTasks } from "./tasks.js";
 import { loadMemory } from './memory/config.js';
+import { loadGlobalMemory } from './memory/global.js';
 import { finishMemoryAttempt, type MemoryScope } from './memory/access.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -116,6 +117,9 @@ export function durableRunner(
     let execution: Execution;
     try {
       if (role !== 'status' && !args[10]?.disabled) {
+        const global = await loadGlobalMemory(store.baseDir);
+        if (global.config?.enabled) args[10] = { ...args[10], global: structuredClone(global.config) };
+        if (global.error) await output({ kind: 'system', text: `${global.error}. Continuing without global preferences.` });
         const state = await loadMemory(session.projectPath, store.baseDir);
         if (state.config?.enabled) {
           const git = async (...command: string[]) => (await promisify(execFile)('git', command, { cwd: session.projectPath, timeout: 3000 })).stdout.trim();

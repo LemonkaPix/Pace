@@ -48,6 +48,6 @@ export interface CodexRunner {
     trustedFolders?: string[],
     approvalMode?: ApprovalMode,
     artifactDirectory?: string,
-    memory?: { scope?: import('../core/memory/access.js').MemoryScope; recallQuery?: string; disabled?: boolean },
+    memory?: { scope?: import('../core/memory/access.js').MemoryScope; global?: import('../core/memory/global.js').GlobalMemory; recallQuery?: string; disabled?: boolean },
   ): Promise<Execution>;
 }

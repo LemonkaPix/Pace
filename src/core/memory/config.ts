@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { atomicJson } from '../sessions.js';
 
 export const BASIC_MEMORY_VERSION = '0.24.1';
-export const MEMORY_POLICY = Object.freeze({ version: 1, searchResults: 5, initialNotes: 2, graphDepth: 1, recallBytes: 3000, responseBytes: 4000, captureBytes: 1200, toolSteps: 8, timeoutMs: 20_000, tokenCounting: 'estimate; byte limits are independent safeguards' });
+export const MEMORY_POLICY = Object.freeze({ version: 2, searchResults: 5, initialNotes: 2, graphDepth: 1, recallBytes: 3000, responseBytes: 4000, captureBytes: 1200, toolSteps: 8, timeoutMs: 20_000, tokenCounting: 'estimate; byte limits are independent safeguards' });
 const absolutePath = z.string().min(1).refine(isAbsolute, 'Expected an absolute path');
 const readySchema = z.object({
   version: z.literal(1), id: z.uuid(), canonicalPath: absolutePath, backend: z.literal('basic-memory'),

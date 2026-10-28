@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { candidateMemory, loadMemory, memoryConfigPath, MEMORY_POLICY, saveMemory, setMemoryEnabled } from '../src/core/memory/config.js';
-import { MemoryAccess, exportMemory, finishMemoryAttempt, repairMemoryWriter, memoryWriterLocked, type MemoryScope } from '../src/core/memory/access.js';
+import { MemoryAccess, exportMemory, finishMemoryAttempt, repairMemoryWriter, memoryWriterLocked, memoryRecordSchema, type MemoryScope } from '../src/core/memory/access.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
 import { deleteConversationTurn, undoConversationTurn } from '../src/core/session-model.js';
 import { basicMemoryEnvironment, verifyBasicMemoryScope } from '../src/integrations/basic-memory.js';
@@ -13,6 +13,7 @@ import * as basicMemory from '../src/integrations/basic-memory.js';
 import { captureCheckpoint } from '../src/core/memory/checkpoint.js';
 import { AppServerRunner } from '../src/integrations/app-server-runner.js';
 import { memorySetupService } from '../src/core/memory/setup.js';
+import { pathsInMemoryQuery } from '../src/core/memory/paths.js';
 
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -210,11 +211,77 @@ it('recalls through App Server only when requested and disables raw backend MCP 
       return {};
     },
   }));
-  await runner.run('New task', f.project, {}, undefined, () => {}, undefined, 'main', [], 'request-approval', undefined, { scope: f.scope, recallQuery: 'ordering' });
+  await runner.run('New task', f.project, {}, undefined, () => {}, undefined, 'main', [], 'request-approval', undefined, { scope: f.scope, recallQuery: 'ordering', global: { version: 1, revision: randomUUID(), enabled: true, content: 'a'.repeat(800) } });
   expect(JSON.stringify(requests.find(item => item.method === 'turn/start')?.params.input)).toContain('Preserve queue ordering');
+  const sent = requests.find(item => item.method === 'turn/start')!.params.input.map((item: { text?: string }) => item.text ?? '').join('\n');
+  expect(Buffer.byteLength(sent)).toBeLessThanOrEqual(Buffer.byteLength('New task\n\n') + MEMORY_POLICY.recallBytes);
   expect(requests.find(item => item.method === 'thread/start')?.params.config).toEqual({ 'mcp_servers."basic-memory".enabled': false });
   expect(requests.find(item => item.method === 'thread/start')?.params.dynamicTools[0].name).toBe('pace_memory');
   f.call.mockClear();
   await runner.run('Continue', f.project, {}, 'thread', () => {}, undefined, 'main', [], 'request-approval', undefined, { scope: f.scope });
   expect(f.call.mock.calls.some(([name]) => name === 'search_notes')).toBe(false);
+});
+
+it('keeps repo findings across tasks while task findings stay in their original task and session', async () => {
+  const f = await fixture(), access = new MemoryAccess(f.scope, f.connect);
+  const task = await access.remember({ key: 'working-plan', type: 'observation', content: 'Task-only working plan' });
+  const repo = await access.remember({ key: 'architecture', type: 'decision', scope: 'repo', content: 'Shared repo architecture' });
+  await finishMemoryAttempt(f.scope, true);
+  const other = new MemoryAccess({ ...f.scope, taskId: 'another-task' }, f.connect);
+  expect((await other.search('plan')).map(note => note.id)).toEqual([repo.id]);
+  await expect(other.read(task.id)).rejects.toThrow('outside this scope');
+  const session = new MemoryAccess({ ...f.scope, sessionId: randomUUID() }, f.connect);
+  expect((await session.search('plan')).map(note => note.id)).toEqual([repo.id]);
+  expect(task.scope).toBe('task');
+  await Promise.all([access.close(), other.close(), session.close()]);
+});
+
+it('uses exact path boundaries for search, ID reads and one-hop links without automatically expanding the graph', async () => {
+  const f = await fixture(), writer = new MemoryAccess({ ...f.scope, paths: ['src/pay'] }, f.connect);
+  const module = await writer.remember({ key: 'retry', type: 'procedure', scope: 'path', paths: ['src/pay/'], content: 'Payment retry rule' });
+  await finishMemoryAttempt(f.scope, true);
+  const repo = await writer.remember({ key: 'overview', type: 'decision', scope: 'repo', content: 'Shared architecture summary', relations: [module.id] });
+  await finishMemoryAttempt(f.scope, true);
+  const reader = new MemoryAccess(f.scope, f.connect);
+  f.call.mockClear();
+  const recalled = await reader.recall('Architecture');
+  expect(recalled).toContain(repo.id); expect(recalled).not.toContain(module.id);
+  expect((await reader.read(repo.id)).relations).toEqual([]);
+  expect(f.call.mock.calls.some(([name]) => name === 'build_context')).toBe(false);
+  expect(await reader.relations(repo.id)).toEqual([]);
+  await expect(reader.read(module.id)).rejects.toThrow('outside this scope');
+  expect((await reader.search('retry', ['src/payment'])).map(note => note.id)).not.toContain(module.id);
+  expect((await reader.search('retry', ['src/pay/worker.ts'])).map(note => note.id)).toContain(module.id);
+  expect((await reader.relations(repo.id)).map(note => note.id)).toEqual([module.id]);
+  expect(await reader.read(module.id)).toMatchObject({ scope: 'path', paths: ['src/pay'] });
+  const raw = await reader.tool({ operation: 'search', query: 'retry', paths: ['src/pay'] });
+  expect(JSON.parse(raw).data[0]).toMatchObject({ id: module.id, scope: 'path', paths: ['src/pay'] });
+  await writer.close(); await reader.close();
+});
+
+it('rejects unsafe paths, invisible links and superseding a different scope before backend writes', async () => {
+  const f = await fixture(), access = new MemoryAccess(f.scope, f.connect);
+  const task = await access.remember({ key: 'rule', type: 'decision', content: 'Task rule' });
+  await finishMemoryAttempt(f.scope, true);
+  const writes = f.call.mock.calls.filter(([name]) => name === 'write_note').length;
+  for (const paths of [['../private'], ['/tmp/private'], ['src/../../private'], ['src\\private'], ['src/*'], ['.git/config']])
+    await expect(access.remember({ key: 'bad', type: 'decision', scope: 'path', paths, content: 'bad' })).rejects.toThrow();
+  await expect(access.remember({ key: 'broad', type: 'decision', scope: 'repo', content: 'Must not retract task state', supersedes: [task.id] })).rejects.toThrow('same memory scope');
+  const other = new MemoryAccess({ ...f.scope, taskId: 'another' }, f.connect);
+  await expect(other.remember({ key: 'link', type: 'decision', relations: [task.id], content: 'Invisible link' })).rejects.toThrow('visible');
+  expect(f.call.mock.calls.filter(([name]) => name === 'write_note')).toHaveLength(writes);
+  await access.close(); await other.close();
+});
+
+it('does not let identical keys in different modules supersede each other and preserves legacy IDs', async () => {
+  const f = await fixture(), access = new MemoryAccess(f.scope, f.connect);
+  const a = await access.remember({ key: 'retry', type: 'procedure', scope: 'path', paths: ['src/a'], content: 'Module A' });
+  const b = await access.remember({ key: 'retry', type: 'procedure', scope: 'path', paths: ['src/b'], content: 'Module B' });
+  await finishMemoryAttempt(f.scope, true);
+  expect((await exportMemory(f.config)).records.every(note => note.status === 'active')).toBe(true);
+  const { scope: _, paths: __, ...legacy } = a;
+  expect(memoryRecordSchema.parse(legacy)).toMatchObject({ id: a.id, scope: 'repo', paths: [] });
+  expect(a.id).not.toBe(b.id);
+  expect(pathsInMemoryQuery('Fix `src/a/worker.ts:12` and src/b/, https://example.com; no guessed module')).toEqual(['src/a/worker.ts', 'src/b']);
+  await access.close();
 });

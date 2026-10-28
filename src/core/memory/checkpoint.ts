@@ -14,7 +14,7 @@ export async function captureCheckpoint(store: PaceStore, session: Session, sign
   const scope = { config, baseDir: store.baseDir, sessionId: session.id, taskId: attempt.taskId, attemptId: attempt.id, role: 'main' as const, startedAt: attempt.startedAt, projectPath: session.projectPath, branch: attempt.memoryProvenance.branch, commit: attempt.memoryProvenance.commit };
   const access = new MemoryAccess(scope, undefined, signal);
   try {
-    await access.remember({ key: `checkpoint:${checkpoint.sourceTurnAt}`, type: 'observation',
+    await access.remember({ key: `checkpoint:${checkpoint.sourceTurnAt}`, type: 'observation', scope: 'task',
       content: boundedText(`Historical validated checkpoint, ${checkpoint.createdAt}. Reported findings (recheck current code):\n${checkpoint.note.findings.slice(0, 3).map(item => `${item.file ?? ''}: ${item.detail}`).join('\n')}\nRisks: ${checkpoint.note.risks.slice(0, 2).join('; ')}`, MEMORY_POLICY.captureBytes),
       files: checkpoint.note.findings.flatMap(item => item.file ? [item.file] : []).slice(0, 10) });
     await finishMemoryAttempt(scope, true);

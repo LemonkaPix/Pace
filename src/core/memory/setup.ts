@@ -5,9 +5,11 @@ import { atomicJson } from '../sessions.js';
 import { candidateMemory, loadMemory, memoryConfigPath, saveMemory, setMemoryEnabled, type MemoryConfig } from './config.js';
 import { configureBasicMemory, connectBasicMemory, detectBasicMemory, installBasicMemory, validateBasicMemory } from '../../integrations/basic-memory.js';
 import { memoryWriterLocked, repairMemoryWriter } from './access.js';
+import { loadGlobalMemory, saveGlobalMemory } from './global.js';
 
 export const memorySetupService = {
   load: loadMemory, detect: detectBasicMemory, install: installBasicMemory, toggle: setMemoryEnabled,
+  loadGlobal: loadGlobalMemory, saveGlobal: saveGlobalMemory,
   async check(config: MemoryConfig, signal?: AbortSignal, writeProbe = false) {
     try {
       if (await memoryWriterLocked(config)) throw new Error('Memory writer lock requires repair after verifying its process owner');

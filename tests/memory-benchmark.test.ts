@@ -61,6 +61,14 @@ it('freezes and imports sources into a fresh namespace, preserving relations and
   const invalid = structuredClone(snapshot); invalid.sources = [];
   const fresh = await candidateMemory(targetPath, join(root, 'other-notes'), '/mock/basic-memory', join(root, 'other-store'));
   await expect(importMemory(invalid, fresh, targetStore)).rejects.toThrow('completed main source');
+  const wrongTask = structuredClone(snapshot); wrongTask.records[0]!.source.taskId = 'unrelated-task';
+  await expect(importMemory(wrongTask, fresh, targetStore)).rejects.toThrow('source for its task');
+});
+it('rejects an obsolete seeded policy before either arm creates a model runner', async () => {
+  vi.spyOn(dataset, 'fetchMemoryDataset').mockResolvedValue({ directory: root, snapshot: { version: 1, backendVersion: '0.24.1', policy: { ...MEMORY_POLICY, version: 1 }, records: [], sources: [], preparation: { model: 'mock', effort: 'medium', usage: null, costUsd: null, durationMs: 1 } } });
+  const factory = vi.fn(async () => { throw Error('Runner must not start'); });
+  await expect(runMemoryBenchmark({ preview: await preflight({ category: 'memory', profile: 'quick' }), out: join(root, 'out'), runnerFactory: factory })).rejects.toThrow('before either arm starts');
+  expect(factory).not.toHaveBeenCalled();
 });
 it.skipIf(process.platform !== 'linux')('blocks host, Git and network leakage and runs matched A/B via the shared production policy', async () => {
   await checkMemoryIsolation();

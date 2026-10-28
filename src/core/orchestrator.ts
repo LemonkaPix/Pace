@@ -28,6 +28,7 @@ import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import { prepareTurnPrompt, prepareRunnerPrompt } from "./orchestrator-prompts.js";
 import { loadMemory } from './memory/config.js';
+import { loadGlobalMemory } from './memory/global.js';
 import { prepareTurnArtifacts, finishPlanArtifact } from "./orchestrator-artifacts.js";
 import { requestWorkflowClarification } from "./orchestrator-clarification.js";
 import { prepareTurnSkills } from "./orchestrator-skills.js";
@@ -480,9 +481,12 @@ export class Orchestrator {
         ? `${promptWithHandoff}\n\nIndependently verify the plan. Propose precise changes for every finding. Work read-only; do not edit or save the plan.`
         : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions(), intent === "revise_plan" ? session.turns.at(-1)?.result : undefined) : promptWithHandoff;
       const memoryConfig = (await loadMemory(session.projectPath, this.store.baseDir)).config;
-      const memoryRevision = memoryConfig?.revision ?? 'unconfigured';
-      if (!verifierTurn && session.memoryRevision !== memoryRevision && (memoryConfig || session.memoryRevision)) {
+      const globalMemory = await loadGlobalMemory(this.store.baseDir);
+      const memoryRevision = `${memoryConfig?.revision ?? 'unconfigured'}:${globalMemory.config?.revision ?? (globalMemory.error ? 'unavailable' : 'unconfigured')}`;
+      if (session.memoryRevision !== memoryRevision && (memoryConfig || globalMemory.config || session.memoryRevision)) {
         session.threadId = undefined;
+        session.verifierThreadId = undefined;
+        if (session.verifier) session.verifier.threadId = undefined;
         session.memoryRevision = memoryRevision;
         systemMessage('Memory settings changed. Starting a fresh agent thread with retained conversation history.');
       }

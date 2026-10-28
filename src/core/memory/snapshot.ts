@@ -28,7 +28,7 @@ function validateSources(snapshot: MemorySnapshot, sources: Session[]) {
   if (new Set(snapshot.records.map(record => record.id)).size !== snapshot.records.length || new Set(sources.map(source => source.id)).size !== sources.length) throw new Error('Duplicate frozen memory identity');
   for (const record of snapshot.records) {
     const source = sources.find(source => source.id === record.source.sessionId);
-    if (record.status === 'pending' || !source?.attempts?.some(attempt => attempt.id === record.source.attemptId && attempt.role === 'main' && attempt.status === 'completed')) throw new Error('Frozen note has no completed main source');
+    if (record.status === 'pending' || !source?.attempts?.some(attempt => attempt.id === record.source.attemptId && attempt.taskId === record.source.taskId && attempt.role === 'main' && attempt.status === 'completed')) throw new Error('Frozen note has no completed main source for its task');
     if (record.status === 'active' && source.memoryRetractedAttempts?.includes(record.source.attemptId)) throw new Error('Frozen active note has a retracted source');
     if ([...record.relations, ...record.supersedes].some(id => !snapshot.records.some(target => target.id === id))) throw new Error('Frozen relation has no source record');
   }

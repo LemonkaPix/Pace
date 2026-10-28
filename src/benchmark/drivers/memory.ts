@@ -34,6 +34,8 @@ export async function runMemoryBenchmark({ preview, out, signal, runnerFactory =
     return;
   }
   const { pin, suite } = await memoryInputs(), downloaded = await fetchMemoryDataset(pin, preview.selection.offline, signal);
+  if (preview.profile.name !== 'full-cycle' && JSON.stringify(downloaded.snapshot.policy) !== JSON.stringify(MEMORY_POLICY))
+    throw new Error('Frozen memory policy differs from production policy; prepare a new dataset version before either arm starts');
   const tasks = preview.profile.name === 'quick' ? suite.cases.filter(task => task.id === 'similar-bug') : preview.profile.name === 'confirm' ? suite.holdout : suite.cases;
   await mkdir(out, { recursive: true });
   for (let repetition = 1; repetition <= preview.profile.repeats; repetition++) {
