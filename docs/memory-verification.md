@@ -1,5 +1,9 @@
 # Memory implementation evidence — 2026-10-27
 
+The live integration and economic results below describe policy **v1**. Scope/link changes on 2026-10-28 introduce policy **v2**, global user preferences and the composer indicator; see [current behavior](memory.md). The v1 dataset remains unchanged and must be regenerated before v2 import. No new live memory benchmark was run for this change.
+
+Controlled v2 checks cover scope-filtered search/read/relations, path boundaries and traversal rejection, task/session separation, same-key module isolation, legacy IDs, global-only operation, settings revisions, shared recall bytes, cancelled preference edits and the indicator at 20/40/80/120 columns. The five focused test files pass **57/57**; with the npm package check, the final focused run passes **58/58**. The final repository-wide run passes **759/766**: six existing `clarify` routing failures remain in `execution.test.ts` and `durable-workflow.test.ts`, and a temporary npm package failure occurred while concurrent `/remote` composition edits did not compile. After that composition was completed, build, the npm package test and benchmark TypeScript checks pass. Snapshot/import and obsolete-policy guards also pass controlled tests; an incompatible seed is rejected before either arm starts a model runner. Backend/model calls in these scope checks are mocked; the earlier live backend evidence below does not validate v2 recall quality or economics.
+
 The user stopped further memory benchmarking after the preparation and Quick runs below had finished. No Standard, Confirm or full-cycle model runs were started. Those experiments remain for the user to run. Verification tests use mocks and non-model command probes.
 
 ## Scope and acceptance coverage

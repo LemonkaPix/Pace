@@ -1,5 +1,7 @@
 # Creating and publishing memory datasets
 
+Production scope/link policy is now **v2**. Existing v1 seeds and economic results are historical; seeded execution rejects an incompatible policy before either arm creates a model runner, and import independently checks policy compatibility. Regenerate and freeze a new dataset version with explicit `repo`/`path` scopes for knowledge intended to survive preparation tasks. New findings default to `task`. Do not merely relabel an old snapshot's policy or rewrite its checksum to claim a new preparation run. Global user preferences are not part of a project memory export; controlled dataset runs use isolated Pace profiles.
+
 A memory dataset contains fictional project code, a frozen memory export from earlier Pace agents, and preparation provenance. Future task prompts, graders and solutions belong to the evaluator and stay outside the downloadable repository. Supabase in this guide stores dataset files; Basic Memory remains the local memory backend.
 
 The examples use Bash and run from the Pace checkout unless stated otherwise. They are instructions for the dataset author; documenting a command does not start preparation, evaluation or publication.
