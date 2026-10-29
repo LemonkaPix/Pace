@@ -41,8 +41,9 @@ export const isRegisteredCommand = (input: string, skillNames: readonly string[]
   return commands.includes(command) || hiddenCommands.includes(command) || skillNames.includes(command);
 };
 export const commandArguments: Record<string, string> = {
+  "/artifacts": "[open <id>|folder]",
   "/plan": "[prompt|file]",
-  "/execute": "[file] [prompt]",
+  "/execute": "[id|file] [prompt]",
   "/verify": "[file] [prompt]",
   "/manual": "[model] [effort]",
   "/workflow": "[name|auto]",
@@ -60,7 +61,7 @@ export const skillArguments = (skillName: string): string => {
 };
 export const commandDescriptions: Record<string, string> = {
   "/plan": "Start/toggle planning or load plan file (e.g. /plan plan.md)",
-  "/execute": "Dispatch plan to fresh session via Vex (e.g. /execute [plan.md])",
+  "/execute": "Execute a conversation artifact ID or plan file in a fresh session",
   "/verify": "Verify plan and propose changes (e.g. /verify [file] [focus prompt])",
   "/models": "Choose model and reasoning effort",
   "/mcp": "Manage external MCP servers interactively",

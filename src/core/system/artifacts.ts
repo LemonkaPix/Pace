@@ -1,5 +1,6 @@
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { PaceStore } from "../sessions.js";
 import type { Session } from "../../shared/types.js";
 
@@ -46,4 +47,26 @@ export async function artifactSnapshot(directory: string): Promise<Map<string, n
 
 export function changedArtifacts(before: Map<string, number>, after: Map<string, number>): string[] {
   return [...after].filter(([name, time]) => before.get(name) !== time).map(([name]) => `artifacts/${name}`).sort();
+}
+
+/** Identity is scoped to this conversation and filename, independent of ordering/content. */
+export function artifactId(sessionId: string, name: string): string {
+  return `a-${createHash("sha256").update(`${sessionId}\0${name}`).digest("hex").slice(0, 8)}`;
+}
+
+export async function resolveArtifactId(store: PaceStore, session: Session, id: string): Promise<string> {
+  if (!/^a-[a-f0-9]{4,8}$/i.test(id)) throw new Error("Invalid artifact ID. Choose an a-… ID from /artifacts.");
+  const directory = artifactDirectory(store, session);
+  const files = await artifactSnapshot(directory);
+  const matches = [...files.keys()].filter(name => artifactId(session.id, name).startsWith(id.toLowerCase()));
+  if (!matches.length) throw new Error(`Artifact ${id} was not found in this conversation. Use /artifacts.`);
+  if (matches.length !== 1) throw new Error(`Artifact ${id} is ambiguous. Use a unique ID from /artifacts.`);
+  const path = await realpath(join(directory, matches[0]!));
+  if (dirname(path) !== await realpath(directory)) throw new Error("Artifact is outside this conversation.");
+  return path;
+}
+
+export function artifactLabel(store: PaceStore, session: Session, reference: string): string {
+  const path = artifactPath(store, session, reference);
+  return /^artifacts\/[^/\\]+\.md$/.test(reference) ? `[${artifactId(session.id, reference.slice(10))}] ${path}` : path;
 }

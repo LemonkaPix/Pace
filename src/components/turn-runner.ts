@@ -3,7 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { Config, Route, Session, TurnActivity, OperationIntent, QueuedOperation } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
-import { artifactPath } from "../core/system/artifacts.js";
+import { artifactLabel } from "../core/system/artifacts.js";
 import { PaceStore, SessionConflictError } from "../core/sessions.js";
 import { preparePlanExecution } from "../core/operations.js";
 import { durableRunner, TransitionSaveError } from "../core/task-execution.js";
@@ -241,7 +241,7 @@ export function createTurnRunner({
           outcome.estimatedCostUsd,
         ),
       );
-      for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifactPath(store, outcome.session, artifact));
+      for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifactLabel(store, outcome.session, artifact));
       addFor(sessionId, "divider", "");
       if (!turnSession.deferredTurn && outcome.role !== "aside" && outcome.role !== "verifier" && intent !== "verify_plan" && intent !== "continue_verify" && intent !== "aside" && outcome.session.id === sessionId && checkpointDue(turnSession)) {
         try {

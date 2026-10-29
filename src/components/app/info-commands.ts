@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { markdownLinks, openLink } from "../../core/system/links.js";
 import { debugTurn } from "../../core/prompt-trace.js";
 import { isDebugBuild } from "../../core/build-mode.js";
@@ -6,7 +7,7 @@ import type { Session } from "../../shared/types.js";
 import type { PaceStore } from "../../core/sessions.js";
 import { taskSummary } from "../../core/tasks.js";
 import { taskAccounting } from "../../core/task-execution.js";
-import { artifactDirectory, artifactPath, artifactSnapshot, legacyArtifactDirectory } from "../../core/system/artifacts.js";
+import { artifactDirectory, artifactId, resolveArtifactId, artifactPath, artifactSnapshot, legacyArtifactDirectory } from "../../core/system/artifacts.js";
 import { listMcpServers } from "../../integrations/codex-cli.js";
 import { contextPercent, measuredContext } from "../../core/context.js";
 import { currentManifestSource, newerPaceVersion, refreshVersionManifest } from "../../core/routing/pricing.js";
@@ -30,7 +31,7 @@ export async function showCommandInfo(command: string, parts: string[], {
     add('info', '/memory opens optional project memory setup, settings, or connection repair. Changes apply to the next agent launch.');
     add(
       "info",
-      "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · /links [number] lists/opens Markdown links · /debug [turn] inspects local prompts · Ctrl+O toggle plan, scout, command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+      "/plan [prompt] · /execute [artifact-id|file] [prompt] · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts [open <id>|folder] · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · /links [number] lists/opens Markdown links · /debug [turn] inspects local prompts · Ctrl+O toggle plan, scout, command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
     );
     if (isDebugBuild) add("info", "/benchmark opens Benchmark Center (debug only). Preview and results make no model calls; Start requires idle jobs and queues.");
     add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
@@ -94,14 +95,28 @@ export async function showCommandInfo(command: string, parts: string[], {
   }
   if (command === "/artifacts") {
     try {
+      if (parts.length) {
+        if (parts.length === 1 && parts[0] === "folder") {
+          const directory = artifactDirectory(store, session);
+          await mkdir(directory, { recursive: true });
+          await openLink(directory);
+          add("info", `Opened artifacts folder: ${directory}`);
+        } else if (parts.length === 2 && parts[0] === "open") {
+          const path = await resolveArtifactId(store, session, parts[1]!);
+          await openLink(path);
+          add("info", `Opened artifact: ${path}`);
+        } else add("error", "Use /artifacts, /artifacts open <id>, or /artifacts folder.");
+        return;
+      }
       const files = await artifactSnapshot(artifactDirectory(store, session));
       const legacy = await artifactSnapshot(legacyArtifactDirectory(session.projectPath));
       add(
         "info",
         files.size || legacy.size
           ? [
-              ...[...files.keys()].sort().map(name => artifactPath(store, session, `artifacts/${name}`)),
-              ...[...legacy.keys()].sort().map(name => artifactPath(store, session, `.pace/artifacts/${name}`)),
+              ...[...files.keys()].sort().map(name => `[${artifactId(session.id, name)}] ${artifactPath(store, session, `artifacts/${name}`)}`),
+              ...[...legacy.keys()].sort().map(name => `[legacy] ${artifactPath(store, session, `.pace/artifacts/${name}`)}`),
+              "Use /execute <id> to run, /artifacts open <id> to open, /artifacts folder to browse.",
             ].join("\n")
           : "No Markdown artifacts for this conversation yet.",
       );

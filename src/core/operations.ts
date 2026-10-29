@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { Config, ManualWorkflow, QueuedOperation, Route, Session, WorkflowShape } from "../shared/types.js";
 import { newSession, type PaceStore } from "./sessions.js";
-import { artifactPath } from "./system/artifacts.js";
+import { artifactPath, resolveArtifactId } from "./system/artifacts.js";
 import { executePlanPrompt, tryReadPlanFile } from "./orchestrator-helpers.js";
 
 export function operation(value: string | QueuedOperation, sessionId: string, taskId?: string): QueuedOperation {
@@ -83,11 +83,17 @@ export async function preparePlanExecution(store: PaceStore, source: Session, co
   let extra: string | undefined;
   if (argument?.trim()) {
     const text = argument.trim();
-    const whole = tryReadPlanFile(text, source.projectPath);
     const parts = text.split(/\s+/);
-    const first = whole ?? tryReadPlanFile(parts[0]!, source.projectPath);
-    if (first) { plan = first.content; artifact = first.path; extra = whole ? undefined : parts.slice(1).join(" "); }
-    else extra = text;
+    if (/^a-/i.test(parts[0]!)) {
+      artifact = await resolveArtifactId(store, source, parts[0]!);
+      plan = await readFile(artifact, "utf8");
+      extra = parts.slice(1).join(" ");
+    } else {
+      const whole = tryReadPlanFile(text, source.projectPath);
+      const first = whole ?? tryReadPlanFile(parts[0]!, source.projectPath);
+      if (first) { plan = first.content; artifact = first.path; extra = whole ? undefined : parts.slice(1).join(" "); }
+      else extra = text;
+    }
   }
   if (plan === undefined) plan = await currentPlan(store, source);
   if (!plan?.trim()) throw new Error("No plan found to execute. Provide a plan file or create one with /plan.");

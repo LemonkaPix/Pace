@@ -2,7 +2,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { Progress } from "../../integrations/codex.js";
 import type { Session } from "../../shared/types.js";
 import type { PaceStore } from "../../core/sessions.js";
-import { artifactPath } from "../../core/system/artifacts.js";
+import { artifactLabel } from "../../core/system/artifacts.js";
 import { linesFromSession } from "../session-transcript.js";
 import { formatCommandActivity } from "../shell-runner.js";
 import { updateProcesses, type RunningProcess } from "../RunningProcesses.js";
@@ -81,7 +81,7 @@ export function createTranscriptActions({
     if (activeSessionId.current === sessionId) setLines(updated);
   };
   const renderSessionTurns = (targetSession: Session) => {
-    const { lines: newLines, nextId: id } = linesFromSession(targetSession, nextId.current, reference => artifactPath(store, targetSession, reference));
+    const { lines: newLines, nextId: id } = linesFromSession(targetSession, nextId.current, reference => artifactLabel(store, targetSession, reference));
     nextId.current = id;
     sessionLines.current.set(targetSession.id, newLines);
     if (activeSessionId.current === targetSession.id) setLines(newLines);
