@@ -102,6 +102,16 @@ it("mirrors legacy stages, routing and answered questions without inventing unav
   expect(items.find(item => item.status === "answered")).toMatchObject({ title: "Which target?", text: "Android" });
 });
 
+it("never deduplicates approval journal entries against tool text or missing observation text", () => {
+  const value = session();
+  value.attempts = [attempt({ observations: [{ kind: "activity" }, { kind: "activity", text: "npm test" }] })];
+  const entries = activityPage(value, 0, 100, [
+    { id: "interaction:one:requested", at, kind: "decision", title: "Approval requested", text: "npm test", status: "pending" },
+    { id: "interaction:one:resolved", at, kind: "decision", title: "Approval accepted", status: "accepted" },
+  ]).items;
+  expect(entries.filter(entry => entry.id.startsWith("interaction:"))).toHaveLength(2);
+});
+
 it("computes lightweight session state with waiting interactions taking precedence over running", () => {
   const value = session(); value.attempts = [attempt({ result: "huge".repeat(100_000) })];
   expect(sessionSummary(value).state).toBe("idle");
