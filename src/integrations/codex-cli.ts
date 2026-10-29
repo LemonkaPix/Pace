@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { constants } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { isRecord } from "../shared/config.js";
 
@@ -14,7 +15,12 @@ export type McpServerConfig = {
 
 export function codexCommand(): string {
   const require = createRequire(import.meta.url);
-  return join(dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js");
+  // Avoid Node's cached realpath when dependencies are reinstalled while Pace is running.
+  for (const directory of require.resolve.paths("@openai/codex") ?? []) {
+    const launcher = join(directory, "@openai", "codex", "bin", "codex.js");
+    if (existsSync(launcher)) return launcher;
+  }
+  throw new Error("Codex launcher is missing. Reinstall Pace's dependencies.");
 }
 
 /** Keep MCP configuration, credentials, argument parsing, and OAuth owned by Codex. */
