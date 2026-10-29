@@ -201,6 +201,11 @@ export type ActiveTask = {
   originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean;
   id?: string; workflow?: WorkflowState; assessment?: TaskAssessment;
 };
+export type FileReviewRecord = {
+  fileEdits: string;
+  previous: { path: string; decision?: "accepted" | "rejected" }[];
+  restoredPaths: string[];
+};
 export type Session = {
   memoryRevision?: string;
   memoryRetractedAttempts?: string[];
@@ -239,6 +244,8 @@ export type Session = {
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   undoneTurns?: TurnSummary[];
+  fileReviews?: Record<string, Record<string, "accepted" | "rejected">>;
+  lastFileReview?: FileReviewRecord | { records: FileReviewRecord[] };
   compactions?: CompactionRecord[];
   checkpoint?: CheckpointRecord;
   checkpointGenerations?: CheckpointGeneration[];

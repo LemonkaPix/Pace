@@ -136,6 +136,29 @@ function isDeferred(value: unknown): boolean {
     (value.operation === undefined || validOperation(value.operation));
 }
 function validNewFields(value: Record<string, unknown>): boolean {
+  const editId = (id: string) => /^[0-9a-f-]{36}$/.test(id);
+  const reviewDecision = (decision: unknown) => oneOf(decision, ["accepted", "rejected"]);
+  if (value.fileReviews !== undefined && (!isRecord(value.fileReviews) ||
+    !Object.entries(value.fileReviews).every(([id, decisions]) => editId(id) && isRecord(decisions) &&
+      Object.entries(decisions).every(([path, decision]) => text(path) && reviewDecision(decision))))) return false;
+  if (value.lastFileReview !== undefined) {
+    const last = value.lastFileReview;
+    const records = isRecord(last) && Array.isArray(last.records) ? last.records : [last];
+    if (!records.length) return false;
+    const ids = new Set<string>();
+    for (const record of records) {
+      if (!isRecord(record) || typeof record.fileEdits !== "string" || !editId(record.fileEdits)) return false;
+      if (ids.has(record.fileEdits)) return false;
+      ids.add(record.fileEdits);
+      const previous = record.previous;
+      if (!Array.isArray(previous) || !previous.length || previous.length > 10_000 ||
+        !previous.every(item => isRecord(item) && text(item.path) && (item.decision === undefined || reviewDecision(item.decision)))) return false;
+      const paths = new Set(previous.map(item => item.path));
+      if (paths.size !== previous.length ||
+        !Array.isArray(record.restoredPaths) || !record.restoredPaths.every(path => text(path) && paths.has(path)) ||
+        new Set(record.restoredPaths).size !== record.restoredPaths.length) return false;
+    }
+  }
   if (!optionalText(value.memoryRevision)) return false;
   if (value.memoryRetractedAttempts !== undefined && (!Array.isArray(value.memoryRetractedAttempts) || !value.memoryRetractedAttempts.every(text))) return false;
   const records = (field: string, validate: (item: unknown) => boolean) => value[field] === undefined ||

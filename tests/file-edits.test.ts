@@ -242,3 +242,172 @@ it("retains each failed retry that made file edits so all attempts can be undone
   await changeConversationHistory(store, session, "undo");
   await expect(text("partial")).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+async function recordConversationTurn(change: () => Promise<void>) {
+  const before = await edits.capture();
+  await change();
+  const id = await edits.record(before, await edits.capture());
+  session.turns.push({ prompt: "Edit files", result: "done", at: "now", fileEdits: id });
+  return id!;
+}
+
+it("combines conversation snapshots, deduplicates paths and omits net-zero changes", async () => {
+  await writeFile(file("a"), "original\n");
+  await writeFile(file("deleted"), "remove me\n");
+  await writeFile(file("reverted"), "original\n");
+  await recordConversationTurn(async () => {
+    await writeFile(file("a"), "intermediate\n");
+    await writeFile(file("early"), "first turn\n");
+    await writeFile(file("temporary"), "temporary\n");
+    await writeFile(file("reverted"), "modified\n");
+    await rm(file("deleted"));
+  });
+  await recordConversationTurn(async () => {
+    await writeFile(file("a"), "latest\n");
+    await writeFile(file("late"), "second turn\n");
+    await writeFile(file("reverted"), "original\n");
+    await rm(file("temporary"));
+  });
+  const combined = await edits.conversation(session);
+  expect(combined.changes.map(edit => edit.path)).toEqual(["a", "deleted", "early", "late"]);
+  const patch = await edits.diff(combined.changes[0]!);
+  expect(patch).toContain("-original\n+latest");
+  expect(patch).not.toContain("intermediate");
+  expect(combined.changes.find(edit => edit.path === "deleted")?.after).toBeUndefined();
+});
+
+it.each([false, true])("restores multiple conversation snapshots atomically and saves undo (save failure: %s)", async fail => {
+  const { reviewFileHistory, undoFileReview } = await import("../src/core/file-history.js");
+  await writeFile(file("a"), "original");
+  const first = await recordConversationTurn(async () => {
+    await writeFile(file("a"), "intermediate"); await writeFile(file("b"), "first turn");
+  });
+  const second = await recordConversationTurn(async () => {
+    await writeFile(file("a"), "latest"); await writeFile(file("c"), "second turn");
+  });
+  await store.saveChanges(session);
+  if (fail) vi.spyOn(store, "saveChanges").mockRejectedValueOnce(new Error("disk full"));
+  if (fail) await expect(reviewFileHistory(store, session, "rejected")).rejects.toThrow("disk full");
+  else {
+    await reviewFileHistory(store, session, "rejected");
+    expect(await text("a")).toBe("original");
+    await expect(text("b")).rejects.toThrow(); await expect(text("c")).rejects.toThrow();
+    expect((await edits.conversation(session)).changes).toEqual([]);
+    const loaded = (await store.load(project, session.id))!;
+    await undoFileReview(store, loaded);
+    expect(loaded.lastFileReview).toBeUndefined();
+  }
+  expect(await text("a")).toBe("latest");
+  expect(await text("b")).toBe("first turn"); expect(await text("c")).toBe("second turn");
+  for (const id of [first, second]) expect((await edits.load(id)).changes.every(edit => !edit.undone)).toBe(true);
+  expect(session.turns).toHaveLength(2);
+  if (fail) expect(session.lastFileReview).toBeUndefined();
+});
+
+it("checks every snapshot before rejecting conversation files when a manual edit conflicts", async () => {
+  const { reviewFileHistory } = await import("../src/core/file-history.js");
+  await writeFile(file("a"), "original");
+  const first = await recordConversationTurn(async () => {
+    await writeFile(file("a"), "intermediate"); await writeFile(file("b"), "agent file");
+  });
+  const second = await recordConversationTurn(async () => {
+    await writeFile(file("a"), "latest"); await writeFile(file("c"), "latest file");
+  });
+  await writeFile(file("b"), "manual edit");
+  await expect(reviewFileHistory(store, session, "rejected")).rejects.toThrow("Cannot undo b");
+  expect(await text("a")).toBe("latest"); expect(await text("b")).toBe("manual edit");
+  expect(await text("c")).toBe("latest file");
+  for (const id of [first, second]) expect((await edits.load(id)).changes.every(edit => !edit.undone)).toBe(true);
+  expect(session.lastFileReview).toBeUndefined();
+});
+
+it("excludes undone conversation turns and keeps only the retained conversation changes", async () => {
+  await recordConversationTurn(async () => { await writeFile(file("early"), "first"); });
+  await recordConversationTurn(async () => { await writeFile(file("late"), "second"); });
+  await changeConversationHistory(store, session, "undo");
+  expect((await edits.conversation(session)).changes.map(edit => edit.path)).toEqual(["early"]);
+});
+
+it("includes new and modified files from the active conversation before its turn finishes", async () => {
+  await writeFile(file("a"), "original\n");
+  await recordConversationTurn(async () => {
+    await writeFile(file("a"), "saved\n"); await writeFile(file("early"), "earlier file\n");
+  });
+  const capture = await beginFileEdits(store, session);
+  try {
+    await writeFile(file("a"), "live\n"); await writeFile(file("live"), "new live file\n");
+    const combined = await edits.conversation(session);
+    expect(combined.changes.map(edit => edit.path)).toEqual(["a", "early", "live"]);
+    expect(await edits.diff(combined.changes[0]!)).toContain("-original\n+live");
+    const other = newSession(project, "manual");
+    expect((await new FileEdits(store, other).conversation(other)).changes).toEqual([]);
+  } finally { await capture.finish(); }
+});
+
+it("keeps acceptance attached to reviewed versions when later conversation edits arrive", async () => {
+  const { reviewFileHistory, undoFileReview } = await import("../src/core/file-history.js");
+  await writeFile(file("a"), "original");
+  await recordConversationTurn(async () => { await writeFile(file("a"), "first edit"); });
+  await reviewFileHistory(store, session, "accepted", "a");
+  expect((await edits.conversation(session)).changes[0]?.review).toBe("accepted");
+  await recordConversationTurn(async () => { await writeFile(file("a"), "second edit"); });
+  expect((await edits.conversation(session)).changes[0]?.review).toBeUndefined();
+  await reviewFileHistory(store, session, "accepted", "a");
+  expect((await edits.conversation(session)).changes[0]?.review).toBe("accepted");
+  await undoFileReview(store, session);
+  expect((await edits.conversation(session)).changes[0]?.review).toBeUndefined();
+  expect(await text("a")).toBe("second edit");
+});
+
+it("groups a content-matching move and rejects or restores both paths together", async () => {
+  const { reviewFileHistory, undoFileReview } = await import("../src/core/file-history.js");
+  await writeFile(file("old.ts"), "unchanged content\n");
+  await recordConversationTurn(async () => {
+    await writeFile(file("new.ts"), await text("old.ts")); await rm(file("old.ts"));
+  });
+  const combined = await edits.conversation(session);
+  expect(combined.changes).toHaveLength(1);
+  expect(combined.changes[0]).toMatchObject({ path: "new.ts", previousPath: "old.ts" });
+  const patch = await edits.diff(combined.changes[0]!);
+  expect(patch).toContain("--- a/old.ts\n+++ b/new.ts");
+  expect(patch).toContain("@@ -1,1 +1,1 @@\n unchanged content");
+  await reviewFileHistory(store, session, "accepted", "new.ts");
+  expect((await edits.conversation(session)).changes[0]?.review).toBe("accepted");
+  await reviewFileHistory(store, session, "rejected", "new.ts");
+  expect(await text("old.ts")).toBe("unchanged content\n");
+  await expect(text("new.ts")).rejects.toThrow();
+  expect((await edits.conversation(session)).changes).toEqual([]);
+  await undoFileReview(store, session);
+  expect(await text("new.ts")).toBe("unchanged content\n");
+  await expect(text("old.ts")).rejects.toThrow();
+});
+
+it("does not guess moves for ambiguous identical files", async () => {
+  await writeFile(file("old-a"), "same"); await writeFile(file("old-b"), "same");
+  await recordConversationTurn(async () => {
+    await rm(file("old-a")); await rm(file("old-b")); await writeFile(file("new"), "same");
+  });
+  const combined = await edits.conversation(session);
+  expect(combined.changes).toHaveLength(3);
+  expect(combined.changes.every(edit => !edit.previousPath)).toBe(true);
+});
+
+it("protects both endpoints of a move when the old path has a later manual edit", async () => {
+  const { reviewFileHistory } = await import("../src/core/file-history.js");
+  await writeFile(file("old"), "agent content");
+  await recordConversationTurn(async () => {
+    await writeFile(file("new"), "agent content"); await rm(file("old"));
+  });
+  await writeFile(file("old"), "manual content");
+  await expect(reviewFileHistory(store, session, "rejected", "new")).rejects.toThrow("Cannot undo old");
+  expect(await text("new")).toBe("agent content");
+  expect(await text("old")).toBe("manual content");
+  expect(session.lastFileReview).toBeUndefined();
+});
+
+it("preserves trailing code whitespace in source lines used by review comments", async () => {
+  await writeFile(file("code.txt"), "old\n");
+  await recordConversationTurn(async () => { await writeFile(file("code.txt"), "new  \n"); });
+  const edit = (await edits.conversation(session)).changes[0]!;
+  expect((await edits.diff(edit)).split("\n").at(-1)).toBe("+new  ");
+});

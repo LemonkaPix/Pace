@@ -1,5 +1,5 @@
 import { setSteeringHistoryActive } from "./session-model.js";
-import type { Session, TurnSummary } from "../shared/types.js";
+import type { FileReviewRecord, Session, TurnSummary } from "../shared/types.js";
 import { FileEdits, fileTurnActive } from "./file-edits.js";
 import { type PaceStore, undoConversationTurn } from "./sessions.js";
 
@@ -40,4 +40,53 @@ export async function changeFileHistory(store: PaceStore, session: Session, id: 
   const next = structuredClone(session);
   invalidateThread(next);
   return restoreAndSave(store, session, next, id, direction, [path]);
+}
+
+/** Review the complete conversation; restore every contributing snapshot in one transaction. */
+export async function reviewFileHistory(store: PaceStore, session: Session,
+  decision: "accepted" | "rejected", path?: string): Promise<void> {
+  if (fileTurnActive(session.projectPath)) throw new Error("Wait for running turns in this project before changing files.");
+  const edits = new FileEdits(store, session);
+  const visible = new Set((await edits.conversation(session)).changes.filter(edit => !path || edit.path === path)
+    .flatMap(edit => edit.previousPath ? [edit.previousPath, edit.path] : [edit.path]));
+  const next = structuredClone(session);
+  const records: FileReviewRecord[] = [];
+  for (const turn of session.turns) {
+    const id = turn.fileEdits;
+    if (!id || id === "none") continue;
+    const files = (await edits.load(id)).changes.filter(edit => visible.has(edit.path) && !edit.undone && session.fileReviews?.[id]?.[edit.path] !== decision);
+    if (!files.length) continue;
+    const decisions = Object.assign(Object.create(null) as Record<string, "accepted" | "rejected">, next.fileReviews?.[id]);
+    (next.fileReviews ??= {})[id] = decisions;
+    const previous = files.map(edit => ({ path: edit.path, decision: decisions[edit.path] }));
+    const restoredPaths = decision === "rejected" ? files.map(edit => edit.path) : [];
+    records.push({ fileEdits: id, previous, restoredPaths });
+    for (const edit of files) decisions[edit.path] = decision;
+  }
+  if (!records.length) return;
+  next.lastFileReview = records.length === 1 ? records[0] : { records };
+  if (records.some(record => record.restoredPaths.length)) invalidateThread(next);
+  await edits.restoreSequence([...records].reverse().filter(record => record.restoredPaths.length)
+    .map(record => ({ id: record.fileEdits, direction: "undo", paths: record.restoredPaths })), () => store.saveChanges(next));
+  Object.assign(session, next);
+}
+
+export async function undoFileReview(store: PaceStore, session: Session): Promise<void> {
+  const last = session.lastFileReview;
+  if (!last) return;
+  const records = "records" in last ? last.records : [last];
+  const next = structuredClone(session);
+  for (const record of records) {
+    const decisions = Object.assign(Object.create(null) as Record<string, "accepted" | "rejected">, next.fileReviews?.[record.fileEdits]);
+    (next.fileReviews ??= {})[record.fileEdits] = decisions;
+    for (const { path, decision } of record.previous) {
+      if (decision) decisions[path] = decision;
+      else delete decisions[path];
+    }
+  }
+  next.lastFileReview = undefined;
+  if (records.some(record => record.restoredPaths.length)) invalidateThread(next);
+  await new FileEdits(store, session).restoreSequence(records.filter(record => record.restoredPaths.length)
+    .map(record => ({ id: record.fileEdits, direction: "redo", paths: record.restoredPaths })), () => store.saveChanges(next));
+  Object.assign(session, next);
 }

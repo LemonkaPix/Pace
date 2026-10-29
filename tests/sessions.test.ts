@@ -171,3 +171,29 @@ it('leaves the source untouched if a saved session is invalid', async () => {
   expect((await readdir(store.sessionDir(oldPath))).length).toBe(3);
   expect(await store.list(newPath)).toEqual([]);
 });
+
+it('validates saved review decisions and the last decision used by Undo', async () => {
+  const { parseSession } = await import('../src/core/session-record.js');
+  const session = newSession('/review-project', 'manual');
+  const id = '11111111-1111-4111-8111-111111111111';
+  session.fileReviews = { [id]: { 'a.txt': 'rejected' } };
+  session.lastFileReview = { fileEdits: id, previous: [{ path: 'a.txt' }], restoredPaths: ['a.txt'] };
+  expect(parseSession(structuredClone(session), session.projectPath)?.lastFileReview).toEqual(session.lastFileReview);
+  for (const fields of [
+    { fileReviews: { invalid: { 'a.txt': 'accepted' } } },
+    { fileReviews: { [id]: { 'a.txt': 'unknown' } } },
+    { lastFileReview: { ...session.lastFileReview, restoredPaths: ['different.txt'] } },
+    { lastFileReview: { ...session.lastFileReview, previous: [{ path: 'a.txt', decision: 'unknown' }] } },
+  ]) expect(parseSession({ ...session, ...fields }, session.projectPath)).toBeUndefined();
+});
+
+it('validates multi-snapshot review undo while retaining legacy single-snapshot undo', async () => {
+  const { parseSession } = await import('../src/core/session-record.js');
+  const session = newSession('/review-project', 'manual');
+  const record = { fileEdits: '11111111-1111-4111-8111-111111111111', previous: [{ path: 'a.txt' }], restoredPaths: ['a.txt'] };
+  const second = { ...record, fileEdits: '22222222-2222-4222-8222-222222222222' };
+  for (const lastFileReview of [record, { records: [record, second] }])
+    expect(parseSession({ ...session, lastFileReview }, session.projectPath)?.lastFileReview).toEqual(lastFileReview);
+  for (const records of [[], [record, record], [record, { ...second, restoredPaths: ['missing.txt'] }]])
+    expect(parseSession({ ...session, lastFileReview: { records } }, session.projectPath)).toBeUndefined();
+});

@@ -10,12 +10,16 @@ const exec = promisify(execFile);
 const hash = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 const uuid = /^[0-9a-f-]{36}$/;
 const excluded = new Set([".git", ".pace", "node_modules", "dist", "build", ".next", ".venv", "__pycache__"]);
-const active = new Map<string, Set<{ overlapped: boolean }>>();
+type ActiveCapture = { overlapped: boolean; sessionId: string; before?: Snapshot };
+const active = new Map<string, Set<ActiveCapture>>();
 const restoring = new Map<string, Promise<void>>();
 type FileState = { hash: string; mode: number; kind: "file" | "symlink" };
 type Snapshot = { files: Map<string, FileState>; ignored: string[] };
 export type FileEdit = { path: string; before?: FileState; after?: FileState; undone: boolean };
 export type FileEditRecord = { version: 1; project: string; changes: FileEdit[] };
+export type ConversationFileEdit = FileEdit & { review?: "accepted"; previousPath?: string };
+export type ConversationEdits = Omit<FileEditRecord, "changes"> & { changes: ConversationFileEdit[] };
+type RestoreStep = { id: string; direction: "undo" | "redo"; paths?: string[] };
 const same = (a?: FileState, b?: FileState) => a?.hash === b?.hash && a?.mode === b?.mode && a?.kind === b?.kind;
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
@@ -25,8 +29,8 @@ export function fileTurnActive(project: string): boolean { return !!active.get(r
 export async function beginFileEdits(store: PaceStore, session: Session) {
   const project = resolve(session.projectPath);
   while (restoring.has(project)) await restoring.get(project);
-  const token = { overlapped: false };
-  const turns = active.get(project) ?? new Set<{ overlapped: boolean }>();
+  const token: ActiveCapture = { overlapped: false, sessionId: session.id };
+  const turns = active.get(project) ?? new Set<ActiveCapture>();
   if (turns.size) { token.overlapped = true; for (const turn of turns) turn.overlapped = true; }
   turns.add(token);
   active.set(project, turns);
@@ -34,6 +38,7 @@ export async function beginFileEdits(store: PaceStore, session: Session) {
   const edits = new FileEdits(store, session);
   try {
     const before = await edits.capture();
+    token.before = before;
     return {
       async finish(): Promise<{ id?: string; skipped?: string }> {
         try {
@@ -148,7 +153,7 @@ export class FileEdits {
     }
     return { files: snapshot, ignored };
   }
-  async record(before: Snapshot, after: Snapshot): Promise<string | undefined> {
+  private async changes(before: Snapshot, after: Snapshot): Promise<FileEdit[]> {
     // Ignore rules can change mid-turn. A missing listing entry is not necessarily a deletion.
     for (const path of before.files.keys()) {
       if (after.files.has(path)) continue;
@@ -159,11 +164,61 @@ export class FileEdits {
       .filter(path => before.files.has(path) || !before.ignored.some(item => item.endsWith("/") ? path.startsWith(item) : path === item))
       .filter(path => !same(before.files.get(path), after.files.get(path)))
       .map(path => ({ path, before: before.files.get(path), after: after.files.get(path), undone: false }));
+    return changes;
+  }
+  async record(before: Snapshot, after: Snapshot): Promise<string | undefined> {
+    const changes = await this.changes(before, after);
     if (!changes.length) return undefined;
     const id = randomUUID();
     await atomicJson(join(this.directory, `${id}.json`), { version: 1, project: this.project, changes });
     return id;
   }
+  async conversation(session: Session): Promise<ConversationEdits> {
+    const combined = new Map<string, FileEdit & { review?: "accepted" }>();
+    const merge = (changes: FileEdit[], id?: string) => {
+      for (const edit of changes) {
+        let file = combined.get(edit.path);
+        if (!file) {
+          file = { path: edit.path, before: edit.before, after: edit.before, undone: false, review: "accepted" };
+          combined.set(edit.path, file);
+        }
+        if (edit.undone) continue;
+        file.after = edit.after;
+        if (!id || session.fileReviews?.[id]?.[edit.path] !== "accepted") file.review = undefined;
+      }
+    };
+    for (const turn of session.turns) {
+      if (turn.fileEdits && turn.fileEdits !== "none") merge((await this.load(turn.fileEdits)).changes, turn.fileEdits);
+    }
+    for (const capture of active.get(this.project) ?? []) {
+      if (capture.sessionId !== session.id || capture.overlapped || !capture.before) continue;
+      const changes = await this.changes(capture.before, await this.capture(capture.before));
+      if (!capture.overlapped) merge(changes);
+    }
+    const changes = [...combined.values()].filter(edit => !same(edit.before, edit.after));
+    const removed = new Map<string, ConversationFileEdit[]>(), added = new Map<string, ConversationFileEdit[]>();
+    for (const edit of changes) {
+      if (edit.before && edit.after) continue;
+      const state = (edit.before ?? edit.after)!;
+      const key = `${state.kind}:${state.hash}`;
+      const group = edit.before ? removed : added;
+      const files = group.get(key) ?? [];
+      files.push(edit); group.set(key, files);
+    }
+    const paired = new Set<string>();
+    const moves: ConversationFileEdit[] = [];
+    for (const [key, sources] of removed) {
+      const targets = added.get(key);
+      if (sources.length !== 1 || targets?.length !== 1) continue;
+      const source = sources[0]!, target = targets[0]!;
+      paired.add(source.path); paired.add(target.path);
+      moves.push({ ...target, before: source.before, previousPath: source.path,
+        review: source.review === "accepted" && target.review === "accepted" ? "accepted" : undefined });
+    }
+    return { version: 1, project: this.project, changes: [...changes.filter(edit => !paired.has(edit.path)), ...moves]
+      .sort((a, b) => a.path.localeCompare(b.path)) };
+  }
+
   async load(id: string): Promise<FileEditRecord> {
     if (!uuid.test(id)) throw new Error("Invalid file edit record.");
     const record: FileEditRecord = JSON.parse(await readFile(join(this.directory, `${id}.json`), "utf8"));
@@ -189,53 +244,71 @@ export class FileEdits {
     } finally { await rm(temp, { force: true }); }
   }
   async restore(id: string, direction: "undo" | "redo", paths?: string[], commit?: () => Promise<void>): Promise<number> {
+    return this.restoreSequence([{ id, direction, paths }], commit);
+  }
+  async restoreSequence(steps: RestoreStep[], commit?: () => Promise<void>): Promise<number> {
     if (fileTurnActive(this.project)) throw new Error("Wait for running turns in this project before changing files.");
     if (restoring.has(this.project)) throw new Error("Another file history change is in progress.");
     let release!: () => void;
     restoring.set(this.project, new Promise<void>(resolve => { release = resolve; }));
-    try { return await this.restoreFiles(id, direction, paths, commit); }
+    try { return await this.restoreFiles(steps, commit); }
     finally { restoring.delete(this.project); release(); }
   }
-  private async restoreFiles(id: string, direction: "undo" | "redo", paths?: string[], commit?: () => Promise<void>): Promise<number> {
-    const record = await this.load(id);
-    const selected = record.changes.filter(edit => edit.undone === (direction === "redo") && (!paths || paths.includes(edit.path)));
-    const prepared = [];
-    for (const edit of selected) {
-      const current = await this.state(edit.path);
-      const expected = edit.undone ? edit.before : edit.after;
-      if (!same(current?.state, expected)) throw new Error(`Cannot ${direction} ${edit.path}: file changed since this edit. No files changed.`);
-      const state = direction === "undo" ? edit.before : edit.after;
-      prepared.push({ edit, state, data: await this.data(state), original: current });
+  private async restoreFiles(steps: RestoreStep[], commit?: () => Promise<void>): Promise<number> {
+    const records = new Map<string, { record: FileEditRecord; flags: boolean[] }>();
+    type Contents = Awaited<ReturnType<FileEdits["state"]>>;
+    const originals = new Map<string, Contents>();
+    const prepared = new Map<string, Contents>();
+    let count = 0;
+    // Simulate all restores before writing, including files touched by several turns.
+    for (const { id, direction, paths } of steps) {
+      if (!records.has(id)) {
+        const record = await this.load(id);
+        records.set(id, { record, flags: record.changes.map(edit => edit.undone) });
+      }
+      const { record } = records.get(id)!;
+      for (const edit of record.changes.filter(edit => edit.undone === (direction === "redo") && (!paths || paths.includes(edit.path)))) {
+        if (!originals.has(edit.path)) originals.set(edit.path, await this.state(edit.path));
+        const current = prepared.has(edit.path) ? prepared.get(edit.path) : originals.get(edit.path);
+        const expected = edit.undone ? edit.before : edit.after;
+        if (!same(current?.state, expected)) throw new Error(`Cannot ${direction} ${edit.path}: file changed since this edit. No files changed.`);
+        const state = direction === "undo" ? edit.before : edit.after;
+        prepared.set(edit.path, state ? { state, data: await this.data(state) } : undefined);
+        edit.undone = direction === "undo";
+        count++;
+      }
     }
-    const applied: typeof prepared = [];
-    const originalFlags = record.changes.map(edit => edit.undone);
-    let saved = false;
+    const applied: string[] = [], saved: string[] = [];
     try {
-      for (const item of prepared) { await this.write(item.edit.path, item.state, item.data); applied.push(item); }
-      for (const { edit } of prepared) edit.undone = direction === "undo";
-      await atomicJson(join(this.directory, `${id}.json`), record);
-      saved = true;
+      for (const [path, contents] of prepared) {
+        await this.write(path, contents?.state, contents?.data ?? Buffer.alloc(0)); applied.push(path);
+      }
+      for (const [id, { record }] of records) {
+        await atomicJson(join(this.directory, `${id}.json`), record); saved.push(id);
+      }
       await commit?.();
     } catch (error) {
       const failures = [];
-      for (const item of applied.reverse()) {
-        try { await this.write(item.edit.path, item.original?.state, item.original?.data ?? Buffer.alloc(0)); }
-        catch { failures.push(item.edit.path); }
+      for (const path of applied.reverse()) {
+        const original = originals.get(path);
+        try { await this.write(path, original?.state, original?.data ?? Buffer.alloc(0)); }
+        catch { failures.push(path); }
       }
-      if (saved) {
-        record.changes.forEach((edit, index) => { edit.undone = originalFlags[index]!; });
+      for (const id of saved) {
+        const { record, flags } = records.get(id)!;
+        record.changes.forEach((edit, index) => { edit.undone = flags[index]!; });
         try { await atomicJson(join(this.directory, `${id}.json`), record); }
         catch { failures.push("saved edit record"); }
       }
       if (failures.length) throw new Error(`Edit restore failed; could not roll back: ${failures.join(", ")}. ${String(error)}`);
       throw error;
     }
-    return prepared.length;
+    return count;
   }
-  async diff(edit: FileEdit): Promise<string> {
+  async diff(edit: FileEdit & { previousPath?: string }): Promise<string> {
     const before = await this.data(edit.before);
     const after = await this.data(edit.after);
-    const header = `${edit.before ? `--- a/${edit.path}` : "--- /dev/null"}\n${edit.after ? `+++ b/${edit.path}` : "+++ /dev/null"}`;
+    const header = `${edit.before ? `--- a/${edit.previousPath ?? edit.path}` : "--- /dev/null"}\n${edit.after ? `+++ b/${edit.path}` : "+++ /dev/null"}`;
     if (before.includes(0) || after.includes(0)) return `${header}\nBinary file changed`;
     const old = await this.blob(before), next = await this.blob(after);
     let output: string;
@@ -245,9 +318,15 @@ export class FileEdits {
       else if ((error as NodeJS.ErrnoException).code === "ENOENT") output = `@@ -1,${before.toString().split("\n").length} +1,${after.toString().split("\n").length} @@\n${before.toString().split("\n").map(line => `-${line}`).join("\n")}\n${after.toString().split("\n").map(line => `+${line}`).join("\n")}`;
       else throw error;
     }
-    const hunk = output.indexOf("@@");
+    let hunk = output.indexOf("@@");
+    if (hunk < 0 && edit.previousPath && after.length) {
+      const lines = after.toString().split("\n");
+      if (lines.at(-1) === "") lines.pop();
+      output = `@@ -1,${lines.length} +1,${lines.length} @@\n${lines.map(line => ` ${line}`).join("\n")}`;
+      hunk = 0;
+    }
     const mode = edit.before?.mode !== edit.after?.mode ? `\nmode ${edit.before?.mode.toString(8) ?? "absent"} → ${edit.after?.mode.toString(8) ?? "absent"}` : "";
     const kind = edit.before && edit.after && edit.before.kind !== edit.after.kind ? `\ntype ${edit.before.kind} → ${edit.after.kind}` : "";
-    return `${header}${mode}${kind}\n${hunk < 0 ? "No text changes" : output.slice(hunk).trimEnd()}`;
+    return `${header}${mode}${kind}\n${hunk < 0 ? "No text changes" : output.slice(hunk).replace(/\n$/, "")}`;
   }
 }
