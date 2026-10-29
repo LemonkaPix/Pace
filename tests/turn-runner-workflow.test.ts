@@ -138,6 +138,51 @@ it("UI pauses queue draining and recovers when a conflict occurs during the post
   expect(env.lines.filter(line => line.role === "error")).toEqual([]);
 });
 
+it("UI keeps checkpoint status distinct from agent work and becomes idle after invalid notes", async () => {
+  const env = await fixture();
+  env.runner.run = async (...args) => {
+    env.calls.push(args);
+    await args[4]({ kind: "thread", text: "main-thread" });
+    await args[4]({ kind: "status", text: "Working…" });
+    return { completed: true, result: env.calls.length === 1 ? "Finished answer" : "{}", threadId: "main-thread", context: { tokens: 900, windowTokens: 1000 } };
+  };
+  expect(await env.runTurn("Continue planning", env.source, env.config)).toBe(true);
+  const checkpointStart = env.statuses.indexOf("Creating context checkpoint…");
+  expect(checkpointStart).toBeGreaterThan(-1);
+  expect(env.statuses.slice(checkpointStart)).not.toContain("Working…");
+  expect(env.source.turns.at(-1)?.result).toBe("Finished answer");
+  expect(env.source.checkpointGenerations?.map(item => item.outcome)).toEqual(["invalid", "invalid"]);
+  expect(env.jobs.current.size).toBe(0);
+  expect(env.source.attempts?.some(item => item.status === "running")).toBe(false);
+  expect(env.source.threadId).toBe("main-thread");
+  expect(await env.runTurn("Next request", env.source, env.config)).toBe(true);
+});
+
+it("UI releases a stalled checkpoint job after its deadline without losing the finished answer", async () => {
+  const env = await fixture();
+  let checkpointStarted = false;
+  env.runner.run = async (...args) => {
+    env.calls.push(args);
+    if (env.calls.length === 1) return { completed: true, result: "Finished answer", threadId: "main-thread", context: { tokens: 900, windowTokens: 1000 } };
+    checkpointStarted = true;
+    return new Promise((_resolve, reject) => args[5]?.addEventListener("abort", () => reject(args[5]?.reason), { once: true }));
+  };
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const pending = env.runTurn("Continue planning", env.source, env.config);
+    await vi.waitFor(() => expect(checkpointStarted).toBe(true));
+    expect(env.jobs.current.has(env.source.id)).toBe(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await pending).toBe(true);
+    expect(env.jobs.current.size).toBe(0);
+    expect(env.source.attempts?.some(item => item.status === "running")).toBe(false);
+    const saved = (await env.store.load(env.root, env.source.id))!;
+    expect(saved.turns.at(-1)?.result).toBe("Finished answer");
+    expect(saved.threadId).toBe("main-thread");
+    expect(saved.checkpointGenerations?.at(-1)?.error).toContain("timed out");
+  } finally { vi.useRealTimers(); }
+});
+
 for (const failureAt of ["start", "result"]) it(`UI accepts the next prompt after a ${failureAt} persistence failure in the same process`, async () => {
   const env = await fixture();
   const save = env.store.saveChanges.bind(env.store);

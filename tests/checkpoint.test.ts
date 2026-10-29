@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { CHECKPOINT_MAX_CHARS, checkpointDue, checkpointHandoff, createCheckpointIfDue, parseCheckpoint } from "../src/core/checkpoint.js";
 import { newSession, undoConversationTurn } from "../src/core/sessions.js";
 import type { CheckpointNote } from "../src/shared/types.js";
@@ -86,4 +86,26 @@ it("waits four turns after a failed generation before retrying", () => {
   expect(checkpointDue(session)).toBe(false);
   session.turns.push(...Array.from({ length: 4 }, (_, index) => ({ prompt: `next-${index}`, result: "r", at: `next-${index}` })));
   expect(checkpointDue(session)).toBe(true);
+});
+
+it("bounds checkpoint work and preserves the existing thread when generation stalls", async () => {
+  vi.useFakeTimers();
+  try {
+    const session = newSession(process.cwd(), "manual");
+    session.threadId = "thread-1";
+    session.threadTurnCount = 16;
+    session.turns = [{ prompt: "work", result: "Finished", at: "turn-1" }];
+    let checkpointSignal: AbortSignal | undefined;
+    const runner: CodexRunner = { run: async (_p, _cwd, _route, _thread, _progress, signal) => {
+      checkpointSignal = signal;
+      return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    } };
+    const pending = createCheckpointIfDue(session, runner, () => {});
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(checkpointSignal?.aborted).toBe(true);
+    expect(await pending).toBeUndefined();
+    expect(session.threadId).toBe("thread-1");
+    expect(session.turns[0]?.result).toBe("Finished");
+    expect(session.checkpointGenerations?.at(-1)).toMatchObject({ outcome: "failed", error: expect.stringContaining("timed out") });
+  } finally { vi.useRealTimers(); }
 });

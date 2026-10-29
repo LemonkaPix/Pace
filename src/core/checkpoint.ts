@@ -81,67 +81,74 @@ export async function createCheckpointIfDue(
   if (!checkpointDue(session)) return undefined;
   const threadId = session.threadId!;
   const sourceTurnAt = session.turns.at(-1)!.at;
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error("Context checkpoint timed out after 30 seconds")), 30_000);
+  const checkpointSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   let prompt = checkpointPrompt();
   let combinedUsage: Usage | undefined;
   let allUsageKnown = true;
   let totalDurationMs = 0;
   let totalCost = 0;
   let allCostsKnown = true;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const started = performance.now();
-    let usage: Usage | undefined;
-    let outcome: CheckpointGeneration["outcome"] = "failed";
-    let error: string | undefined;
-    let note: CheckpointNote | undefined;
-    let answer: string | undefined;
-    try {
-      await onProgress({ kind: "status", text: attempt === 1 ? "Creating context checkpoint…" : "Correcting context checkpoint…" });
-      const execution = await runner.run(prompt, session.projectPath, session.route, threadId, onProgress, signal, "main", [], approvalMode);
-      if (execution.threadId !== threadId) throw new Error("Checkpoint changed Codex thread");
-      usage = execution.usage;
-      answer = execution.result;
-      session.contextByThread ??= {};
-      if (execution.context) session.contextByThread[threadId] = execution.context;
-      else delete session.contextByThread[threadId];
-      note = parseCheckpoint(answer);
-      outcome = "valid";
-    } catch (cause) {
-      if (cause instanceof TransitionSaveError) throw cause;
-      if (cause instanceof CodexRunError) {
-        usage = cause.usage;
-        if (cause.context) {
-          session.contextByThread ??= {};
-          session.contextByThread[threadId] = cause.context;
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const started = performance.now();
+      let usage: Usage | undefined;
+      let outcome: CheckpointGeneration["outcome"] = "failed";
+      let error: string | undefined;
+      let note: CheckpointNote | undefined;
+      let answer: string | undefined;
+      try {
+        await onProgress({ kind: "status", text: attempt === 1 ? "Creating context checkpoint…" : "Correcting context checkpoint…" });
+        checkpointSignal.throwIfAborted();
+        const execution = await runner.run(prompt, session.projectPath, session.route, threadId,
+          progress => progress.kind === "status" ? undefined : onProgress(progress), checkpointSignal, "main", [], approvalMode);
+        if (execution.threadId !== threadId) throw new Error("Checkpoint changed Codex thread");
+        usage = execution.usage;
+        answer = execution.result;
+        session.contextByThread ??= {};
+        if (execution.context) session.contextByThread[threadId] = execution.context;
+        else delete session.contextByThread[threadId];
+        note = parseCheckpoint(answer);
+        outcome = "valid";
+      } catch (cause) {
+        if (cause instanceof TransitionSaveError) throw cause;
+        if (cause instanceof CodexRunError) {
+          usage = cause.usage;
+          if (cause.context) {
+            session.contextByThread ??= {};
+            session.contextByThread[threadId] = cause.context;
+          }
         }
+        error = String(deadline.signal.aborted ? deadline.signal.reason : cause);
+        outcome = signal?.aborted ? "cancelled" : answer !== undefined ? "invalid" : "failed";
+        if (session.contextByThread && answer === undefined && !(cause instanceof CodexRunError && cause.context)) delete session.contextByThread[threadId];
       }
-      error = String(cause);
-      outcome = signal?.aborted ? "cancelled" : answer !== undefined ? "invalid" : "failed";
-      if (session.contextByThread && answer === undefined && !(cause instanceof CodexRunError && cause.context)) delete session.contextByThread[threadId];
-    }
-    const durationMs = Math.round(performance.now() - started);
-    totalDurationMs += durationMs;
-    if (usage) combinedUsage = combinedUsage ? addUsage(combinedUsage, usage) : usage;
-    else allUsageKnown = false;
-    const cost = costForUsage(session.route, usage);
-    if (cost === undefined) allCostsKnown = false;
-    else totalCost += cost;
-    const generation: CheckpointGeneration = {
-      at: new Date().toISOString(), sourceTurnAt, threadId, route: session.route,
-      durationMs, outcome, usage, estimatedCostUsd: cost, error,
-    };
-    session.checkpointGenerations = [...(session.checkpointGenerations ?? []), generation].slice(-50);
-    if (note) {
-      const checkpoint: CheckpointRecord = {
-        createdAt: generation.at, sourceTurnAt, threadId, route: session.route, note,
-        durationMs: totalDurationMs,
-        usage: allUsageKnown ? combinedUsage : undefined,
-        estimatedCostUsd: allCostsKnown ? totalCost : undefined,
+      const durationMs = Math.round(performance.now() - started);
+      totalDurationMs += durationMs;
+      if (usage) combinedUsage = combinedUsage ? addUsage(combinedUsage, usage) : usage;
+      else allUsageKnown = false;
+      const cost = costForUsage(session.route, usage);
+      if (cost === undefined) allCostsKnown = false;
+      else totalCost += cost;
+      const generation: CheckpointGeneration = {
+        at: new Date().toISOString(), sourceTurnAt, threadId, route: session.route,
+        durationMs, outcome, usage, estimatedCostUsd: cost, error,
       };
-      session.checkpoint = checkpoint;
-      return checkpoint;
+      session.checkpointGenerations = [...(session.checkpointGenerations ?? []), generation].slice(-50);
+      if (note) {
+        const checkpoint: CheckpointRecord = {
+          createdAt: generation.at, sourceTurnAt, threadId, route: session.route, note,
+          durationMs: totalDurationMs,
+          usage: allUsageKnown ? combinedUsage : undefined,
+          estimatedCostUsd: allCostsKnown ? totalCost : undefined,
+        };
+        session.checkpoint = checkpoint;
+        return checkpoint;
+      }
+      if (outcome !== "invalid" || attempt === 2) return undefined;
+      prompt = checkpointPrompt() + `\n\nPrevious note failed validation: ${error}. Rewrite it from the thread context. ${answer!.length <= CHECKPOINT_MAX_CHARS ? `Previous note:\n${answer}` : "The previous note exceeded the size limit; start over."}`;
     }
-    if (outcome !== "invalid" || attempt === 2) return undefined;
-    prompt = checkpointPrompt() + `\n\nPrevious note failed validation: ${error}. Rewrite it from the thread context. ${answer!.length <= CHECKPOINT_MAX_CHARS ? `Previous note:\n${answer}` : "The previous note exceeded the size limit; start over."}`;
-  }
-  return undefined;
+    return undefined;
+  } finally { clearTimeout(timer); }
 }
