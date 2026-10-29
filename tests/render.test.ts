@@ -53,7 +53,7 @@ describe("activity transcript", () => {
 
   it("keeps thinking in the transcript and compacts completed commands", () => {
     const first = render();
-    expect(first).toContain("□ ◆ Thought");
+    expect(first).toContain("• Thinking");
     expect(first).not.toContain("Ran:");
     expect(first).toContain("■ ◆ PS(rg -n foo src) ...");
     expect(first).not.toContain("Output");
@@ -78,7 +78,8 @@ describe("activity transcript", () => {
       outputsExpanded: false, detailsExpanded: false, width: 80,
     }), { columns: 80 });
     expect(output.trim().split("\n")).toHaveLength(1);
-    expect(output).toContain("npm run dev ... <2 more lines>");
+    expect(output).toContain("Running command");
+    expect(output).not.toContain("npm run dev");
   });
 
   it("limits expanded command output to ten lines without wrapping", () => {

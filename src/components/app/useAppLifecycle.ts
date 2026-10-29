@@ -1,3 +1,5 @@
+import { useStdout } from "ink";
+import { supportsAnimation } from "../../shared/colors.js";
 import { useEffect } from "react";
 import { PaceStore, newSession } from "../../core/sessions.js";
 import { configuredSkills } from "../../core/system/skills.js";
@@ -19,6 +21,8 @@ export function useAppLifecycle({ state, transcript, queue }: {
     pendingQuestions, jobs, titleAborts, shells, setVexState, setConfig, latestConfig, setSkills,
     sessionRecords, thisPaceIds, activeSessionId, sessionLines, preSessionLines, setSession,
     setOpenSessions, setMissingProjectPaths, setStatus } = state;
+  const { stdout } = useStdout();
+  const animate = supportsAnimation(stdout, process.env, state.config?.colorScheme);
   const { add } = transcript;
   const { promptQueue } = queue;
   useEffect(() => {
@@ -31,9 +35,10 @@ export function useAppLifecycle({ state, transcript, queue }: {
   }, []);
   useEffect(() => {
     if (!runningIds.length && !sideBusy && shellJobs === 0 && !processes.length) return;
-    const timer = setInterval(() => setTick((value) => value + 1), 80);
+    if (!animate && !shellJobs && !processes.length) return;
+    const timer = setInterval(() => setTick((value) => value + 1), animate ? 80 : 1000);
     return () => clearInterval(timer);
-  }, [runningIds.length, sideBusy, shellJobs, processes.length]);
+  }, [runningIds.length, sideBusy, shellJobs, processes.length, animate]);
   useEffect(
     () => () => {
       void remoteHost.current?.close();

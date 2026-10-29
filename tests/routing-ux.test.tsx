@@ -146,3 +146,12 @@ it("passes available app skill guidance to the scout and the entire large valida
   expect(prompt).toContain('original user request is authoritative');
   expect(JSON.parse(handoff).findings).toHaveLength(25);
 });
+
+it("documents review in help without exposing the removed file commands or shortcuts", async () => {
+  const add = vi.fn();
+  await showCommandInfo("/help", [], { add } as Parameters<typeof showCommandInfo>[2]);
+  const help = add.mock.calls.map(([, text]) => text).join("\n");
+  expect(help).toContain("← file review");
+  expect(help).toContain("/convo");
+  for (const removed of ["/diff", "/undo", "/redo", "Ctrl+Z", "Ctrl+Y"]) expect(help).not.toContain(removed);
+});

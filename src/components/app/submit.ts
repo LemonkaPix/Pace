@@ -1,3 +1,4 @@
+import { COLOR_SCHEMES, type ColorScheme } from "../../shared/colors.js";
 import type { ApprovalMode } from "../../shared/types.js";
 import { retryableTurn } from "../../core/sessions.js";
 import { isDebugBuild } from "../../core/build-mode.js";
@@ -20,7 +21,7 @@ import type { AppState } from "./useAppState.js";
 import type { createTranscriptActions } from "./transcript-actions.js";
 import type { usePromptQueue } from "./usePromptQueue.js";
 
-export function createSubmit({ state, transcript, queue, routing, completion, sessions, planning, auxiliary, execution, exit }: {
+export function createSubmit({ state, transcript, queue, routing, completion, sessions, planning, auxiliary, execution, exit, onClear, saveTheme }: {
   state: AppState;
   transcript: ReturnType<typeof createTranscriptActions>;
   queue: ReturnType<typeof usePromptQueue>;
@@ -31,17 +32,19 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
   auxiliary: ReturnType<typeof createAuxiliaryActions>;
   execution: ReturnType<typeof createExecutionActions>;
   exit: () => void;
+  onClear: () => void;
+  saveTheme: (scheme: ColorScheme) => Promise<void>;
 }) {
   const { historyBusy, switchingSession, session, config, setDraft, shellMode, setHistory,
     setShellMode, jobs, setQueueVersion, skills, setSelection, runTurnRef, setMcpOpen, setBenchmarkOpen,
-    approvalMenu, setApprovalMenu, setConfig, latestConfig, setDiffOpen, setConvoMenu, vexState,
+    approvalMenu, setApprovalMenu, setConfig, latestConfig, setConvoMenu, vexState,
     setQueueMenu, activeSessionId } = state;
   const { add, addFor } = transcript;
   const { promptQueue } = queue;
   const { setKnownModels, enabledModels, availableWorkflows, saveRouting, saveWorkflow,
     setWorkflowOnly, setManualWizard, setManualMenu, setMenuIndex, setModelMenu, refreshModelCatalog } = routing;
   const { registeredCommands, changeAutoLaunch } = completion;
-  const { startNewConversation, changeHistory, cancelRetry } = sessions;
+  const { startNewConversation, cancelRetry } = sessions;
   const { continueVerifier, startOrTogglePlanning, handleExecutePlan, handleVerifyPlan } = planning;
   const { askBtw, handleRemote } = auxiliary;
   const { runTurn, shell, compact } = execution;
@@ -114,7 +117,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       setQueueVersion(value => value + 1); setDraft("");
       add("info", `Queued operation ${position}: ${text}`); return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|debug|links|compact|context|artifacts|models|mcp|trust|skills|approval|tasks|remote|feedback)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|debug|theme|links|compact|context|artifacts|models|mcp|trust|skills|approval|tasks|remote|feedback)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or the conversation picker to switch conversations.");
         return;
@@ -190,6 +193,18 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
         });
         return;
       }
+      if (command === "/theme") {
+        const scheme = parts[0] as ColorScheme | undefined;
+        if (!scheme) { state.setThemeOpen(true); onClear(); return; }
+        if (parts.length !== 1 || !COLOR_SCHEMES.includes(scheme)) { add("error", `Use /theme ${COLOR_SCHEMES.join(" | ")}.`); return; }
+        try {
+          await saveTheme(scheme);
+          onClear();
+          state.setTranscriptRevision(value => value + 1);
+          add("info", `Color scheme: ${scheme}.`);
+        } catch (error) { add("error", `Could not save color scheme: ${String(error)}`); }
+        return;
+      }
       if (command === "/approval") {
         const mode = parts[0] as ApprovalMode | undefined;
         if (!mode) {
@@ -226,16 +241,6 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       }
       if (command === "/trust" || command === "/skills") {
         await configureCommand(command, parts, { config, skills, store, setConfig, setSkills, changeAutoLaunch, add });
-        return;
-      }
-      if (command === "/diff") {
-        if (parts.length) { add("error", "Type /diff without arguments."); return; }
-        setDiffOpen(true);
-        return;
-      }
-      if (command === "/undo" || command === "/redo") {
-        if (parts.length) { add("error", `Type ${command} without arguments.`); return; }
-        await changeHistory(command === "/undo" ? "undo" : "redo");
         return;
       }
       if (command === "/retry") {
@@ -297,5 +302,30 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
     void runTurn(text, session, config);
   };
 
-  return { submit };
+  const submitReviewComment = async (raw: string) => {
+    if (!session || !config || switchingSession.current) throw new Error("No active conversation.");
+    if (historyBusy.current) throw new Error("Wait for file history to finish saving.");
+    const text = raw.trim();
+    if (!text) return;
+    if (jobs.current.has(session.id)) {
+      const position = promptQueue.current.add(session.id, operation(text, session.id, session.activeTask?.id));
+      const id = promptQueue.current.operations(session.id)[position - 1]!.id;
+      setQueueVersion(value => value + 1);
+      try {
+        await state.queueSaves.current.get(session.id);
+        const index = promptQueue.current.operations(session.id).findIndex(item => item.id === id);
+        const prompt = await steerQueuedPrompt(session.id, index, jobs.current, promptQueue.current);
+        addFor(session.id, "you", `Steering: ${prompt}`);
+      } catch (error) {
+        addFor(session.id, "error", `Could not steer: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      } finally { setQueueVersion(value => value + 1); }
+      return;
+    }
+    if (vexState !== "connected" && session.routingMode === "auto")
+      throw new Error("Vex MCP is unavailable. Choose a model in /models for manual turns.");
+    void runTurn(text, session, config);
+  };
+
+  return { submit, submitReviewComment };
 }

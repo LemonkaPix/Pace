@@ -29,6 +29,7 @@ export function useAppState() {
   const [history, setHistory] = useState<string[]>([]);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   const [benchmarkOpen, setBenchmarkOpen] = useState(false);
   const [remoteOpen, setRemoteOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -88,7 +89,7 @@ export function useAppState() {
     setPickerIndex, pickerSearch, setPickerSearch, lines, setLines,
     status, setStatus, runningIds, setRunningIds, sideBusy,
     setSideBusy, draft, setDraft, history, setHistory,
-    outputsExpanded, setOutputsExpanded, diffOpen, setDiffOpen, mcpOpen,
+    outputsExpanded, setOutputsExpanded, diffOpen, setDiffOpen, themeOpen, setThemeOpen, mcpOpen,
     setMcpOpen, benchmarkOpen, setBenchmarkOpen, historyChanging, setHistoryChanging, historyBusy, transcriptRevision,
     memoryOpen, setMemoryOpen, remoteOpen, setRemoteOpen,
     setTranscriptRevision, showHeader, setShowHeader, selection, setSelection,

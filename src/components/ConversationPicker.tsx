@@ -1,3 +1,4 @@
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { menuWindow, type ConversationChoice } from "./conversation-menu-utils.js";
@@ -23,6 +24,7 @@ export function ConversationPicker({
   missingProjectPaths?: string[];
   searchQuery?: string;
 }) {
+  const theme = useTheme();
   const query = searchQuery.trim().toLowerCase();
   const filteredChoices = query
     ? choices.filter(choice => {
@@ -66,16 +68,16 @@ export function ConversationPicker({
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={focused ? "#38BDF8" : "#475569"} paddingX={1} width={width} marginTop={marginTop}>
-      <Text color="#94A3B8" bold wrap="truncate">
+    <Box flexDirection="column" borderStyle="round" borderColor={focused ? theme.primary : theme.border} paddingX={1} width={width} marginTop={marginTop}>
+      <Text color={theme.muted} bold wrap="truncate">
         Conversations {showHints ? <Text dimColor>· ↓ to select · Enter switch · Esc back</Text> : null}
       </Text>
       {focused ? (
         <Box gap={1} marginY={0}>
-          <Text color="#38BDF8">Search repo/convo:</Text>
-          <Text color="white" bold>{searchQuery || ""}</Text>
-          <Text color="#38BDF8">█</Text>
-          {query && filteredChoices.length === 0 ? <Text color="#EF4444">(no matches)</Text> : null}
+          <Text color={theme.primary}>Search repo/convo:</Text>
+          <Text color={undefined} bold>{searchQuery || ""}</Text>
+          <Text color={theme.primary}>█</Text>
+          {query && filteredChoices.length === 0 ? <Text color={theme.error}>(no matches)</Text> : null}
         </Box>
       ) : null}
       {(["pace", "saved"] as const).map(section => {
@@ -84,13 +86,13 @@ export function ConversationPicker({
         return (
           <React.Fragment key={section}>
             {section === "pace" && (!focused || visible[0]?.index === pace[0]?.index) ? (
-              <Text color="#64748B" bold>This pace ({pace.length})</Text>
+              <Text color={theme.dim} bold>This pace ({pace.length})</Text>
             ) : null}
             {visible.map(({ choice, index }, position) => {
               const selected = focused && index === selectedIndex;
               const current = choice.id === activeId;
               const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
-              const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "question" ? "#A5B4FC" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
+              const stateColor = choice.state === "approval" ? theme.warning : choice.state === "question" ? theme.accent : choice.state === "running" ? theme.primary : choice.state === "done" ? theme.secondary : theme.dim;
               const stateLabel = choice.state === "approval" ? "approve" : choice.state === "question" ? "answer" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
 
               const sectionTitle = choice.sectionTitle || "Saved conversations";
@@ -101,17 +103,17 @@ export function ConversationPicker({
               return (
                 <React.Fragment key={choice.id}>
                   {isFirstInSavedSection ? (
-                    <Text color="#64748B" bold>{sectionTitle} ({count})</Text>
+                    <Text color={theme.dim} bold>{sectionTitle} ({count})</Text>
                   ) : null}
                   {isFirstInSavedSection && choice.projectPath && missingProjectPaths.includes(choice.projectPath)
-                    ? <Text color="#F87171">(missing; use pace reconnect)</Text>
+                    ? <Text color={theme.error}>(missing; use pace reconnect)</Text>
                     : null}
                   <Box gap={1}>
-                    <Box flexShrink={0}><Text color={selected ? (choice.kind === "planning" ? "#C084FC" : "#38BDF8") : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
-                    <Box flexShrink={0}><Text color={current ? (choice.kind === "planning" ? "#C084FC" : "#59E6A7") : (choice.kind === "planning" ? "#D8B4FE" : "#94A3B8")}>{choice.id.slice(0, 8)}</Text></Box>
-                    {choice.kind === "planning" ? <Box flexShrink={0}><Text color="#C084FC" bold>[plan]</Text></Box> : null}
+                    <Box flexShrink={0}><Text color={selected ? (choice.kind === "planning" ? theme.accent : theme.primary) : theme.dim}>{selected ? "▶" : " "}</Text></Box>
+                    <Box flexShrink={0}><Text color={current ? (choice.kind === "planning" ? theme.accent : theme.secondary) : (choice.kind === "planning" ? theme.muted : theme.muted)}>{choice.id.slice(0, 8)}</Text></Box>
+                    {choice.kind === "planning" ? <Box flexShrink={0}><Text color={theme.accent} bold>[plan]</Text></Box> : null}
                     <Box flexShrink={0}><Text color={stateColor}>{stateLabel}</Text></Box>
-                    <Text color={selected ? "white" : (choice.kind === "planning" ? "#F3E8FF" : "#CBD5E1")} wrap="truncate">{prompt.slice(0, 60) || (choice.kind === "planning" ? "New plan" : "New conversation")}</Text>
+                    <Text color={selected ? undefined : (choice.kind === "planning" ? theme.muted : theme.muted)} wrap="truncate">{prompt.slice(0, 60) || (choice.kind === "planning" ? "New plan" : "New conversation")}</Text>
                   </Box>
                 </React.Fragment>
               );
@@ -119,7 +121,7 @@ export function ConversationPicker({
           </React.Fragment>
         );
       })}
-      {filteredChoices.length > visiblePace.length + visibleSaved.length ? <Text color="#64748B">Showing {visiblePace.length + visibleSaved.length} of {filteredChoices.length}</Text> : null}
+      {filteredChoices.length > visiblePace.length + visibleSaved.length ? <Text color={theme.dim}>Showing {visiblePace.length + visibleSaved.length} of {filteredChoices.length}</Text> : null}
     </Box>
   );
 }

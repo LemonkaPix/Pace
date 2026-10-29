@@ -1,3 +1,4 @@
+import { COLOR_SCHEMES, type ColorScheme } from "./colors.js";
 import type { Config, Effort, ModelOption, Route } from "./types.js";
 export const EFFORTS: readonly Effort[] = [
   "minimal",
@@ -29,6 +30,7 @@ export const DEFAULT_CONFIG: Config = {
   defaultRoute: { model: "gpt-6-sol", effort: "high" },
   routingMode: "auto",
   approvalMode: "request-approval",
+  colorScheme: "default",
 };
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -139,7 +141,10 @@ export function parseConfig(value: unknown): Config {
         !value.autoLaunchSkills.every((name: unknown) =>
           typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name))))
     throw new Error("autoLaunchSkills must be a list of up to 32 skill names");
+  if (value.colorScheme !== undefined && !COLOR_SCHEMES.includes(value.colorScheme as ColorScheme))
+    throw new Error(`colorScheme must be ${COLOR_SCHEMES.join(", ")}`);
   return {
+    colorScheme: (value.colorScheme ?? "default") as Config["colorScheme"],
     models,
     defaultRoute,
     routingMode: value.routingMode,

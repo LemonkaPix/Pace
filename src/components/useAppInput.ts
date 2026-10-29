@@ -75,8 +75,6 @@ export function useAppInput(options: {
   onTogglePlan?: () => void;
   onExecutePlan?: () => void;
   onApplyVerification?: () => void;
-  onUndo?: () => void;
-  onRedo?: () => void;
   diffOpen?: boolean;
   modalOpen?: boolean;
   pickerSearch?: string;
@@ -93,7 +91,7 @@ export function useAppInput(options: {
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, draft, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
-    onTogglePlan, onExecutePlan, onApplyVerification, onUndo, onRedo, diffOpen, pickerSearch, setPickerSearch,
+    onTogglePlan, onExecutePlan, onApplyVerification, diffOpen, pickerSearch, setPickerSearch,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
   const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -373,14 +371,6 @@ export function useAppInput(options: {
         add("info", "No queued message to steer.");
         return;
       }
-      return;
-    }
-    if (key.ctrl && input === "z") {
-      if (!jobs.current.has(session?.id ?? "") && session?.turns.length) onUndo?.();
-      return;
-    }
-    if (key.ctrl && input === "y") {
-      if (!jobs.current.has(session?.id ?? "") && session?.undoneTurns?.length) onRedo?.();
       return;
     }
     if ((key.ctrl && (input === "p" || input === "\x10")) || (key.meta && (input === "p" || input === "P"))) {

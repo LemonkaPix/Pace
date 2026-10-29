@@ -1,3 +1,4 @@
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { menuWindow, truncateWithEllipsis } from "./conversation-menu-utils.js";
@@ -19,6 +20,7 @@ export function CommandMenu({
   skillNames?: ReadonlySet<string> | readonly string[];
   autoLaunchSkills?: readonly string[];
 }) {
+  const theme = useTheme();
   const { start, end } = menuWindow(matches.length, selectedIndex);
   const skillSet = skillNames instanceof Set ? skillNames : new Set(skillNames ?? []);
   const isSkill = (cmd: string) =>
@@ -44,8 +46,8 @@ export function CommandMenu({
   const allVisibleAreSkills = visibleMatches.length > 0 && visibleMatches.every(isSkill);
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="#475569" paddingX={1} marginTop={1} width={width}>
-      <Text color={allVisibleAreSkills ? "#A855F7" : "#38BDF8"} bold>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1} marginTop={1} width={width}>
+      <Text color={allVisibleAreSkills ? theme.accent : theme.primary} bold>
         {allVisibleAreSkills ? "◈ Skills" : "◈ Commands"}
       </Text>
       {visibleMatches.map((match, offset) => {
@@ -63,23 +65,23 @@ export function CommandMenu({
           <React.Fragment key={match}>
             {isFirstSkillInWindow ? (
               <Box marginTop={0}>
-                <Text color="#A855F7" bold>◈ Skills</Text>
+                <Text color={theme.accent} bold>◈ Skills</Text>
               </Box>
             ) : null}
             <Box gap={1}>
-              <Text color={selected ? "#59E6A7" : "gray"} bold={selected}>
+              <Text color={selected ? theme.secondary : theme.dim} bold={selected}>
                 {selected ? "▶" : " "}
               </Text>
               <Box width={commandColWidth} flexShrink={0}>
                 <Text wrap="truncate">
-                  <Text color={matchIsSkill ? "#C084FC" : "#38BDF8"} bold>
+                  <Text color={matchIsSkill ? theme.accent : theme.primary} bold>
                     {match}
                   </Text>
-                  {argText ? <Text color="#94A3B8"> {argText}</Text> : null}
+                  {argText ? <Text color={theme.muted}> {argText}</Text> : null}
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <Text color={selected ? "#CBD5E1" : "#64748B"} wrap="truncate">
+                <Text color={selected ? theme.muted : theme.dim} wrap="truncate">
                   {onLaunch ? "ON-LAUNCH · " : ""}{truncateWithEllipsis(displayDescription, Math.max(4, maxDescWidth - (onLaunch ? 12 : 0)))}
                 </Text>
               </Box>
@@ -87,22 +89,22 @@ export function CommandMenu({
           </React.Fragment>
         );
       })}
-      {matches.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {matches.length}</Text> : null}
+      {matches.length > 5 ? <Text color={theme.dim}>{start + 1}–{end} of {matches.length}</Text> : null}
       {selectedMatch && selectedDescription ? (
-        <Box flexDirection="column" marginTop={1} paddingX={1} borderStyle="single" borderColor="#334155" width={width ? Math.max(20, width - 2) : undefined}>
+        <Box flexDirection="column" marginTop={1} paddingX={1} borderStyle="single" borderColor={theme.border} width={width ? Math.max(20, width - 2) : undefined}>
           <Box gap={1}>
             <Text wrap="truncate">
-              <Text color={isSkill(selectedMatch) ? "#C084FC" : "#38BDF8"} bold>{selectedMatch}</Text>
-              {selectedArg ? <Text color="#94A3B8"> {selectedArg}</Text> : null}
+              <Text color={isSkill(selectedMatch) ? theme.accent : theme.primary} bold>{selectedMatch}</Text>
+              {selectedArg ? <Text color={theme.muted}> {selectedArg}</Text> : null}
             </Text>
           </Box>
-          <Text color="#E2E8F0" wrap="wrap">
+          <Text color={theme.muted} wrap="wrap">
             {selectedDescription.split(/\r?\n/).slice(0, 4).join("\n")}
           </Text>
         </Box>
       ) : null}
       <Box marginTop={0}>
-        <Text color="#64748B">↑/↓ select · Tab complete · Alt+A toggle skill</Text>
+        <Text color={theme.dim}>↑/↓ select · Tab complete · Alt+A toggle skill</Text>
       </Box>
     </Box>
   );

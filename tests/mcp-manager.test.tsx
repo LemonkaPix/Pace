@@ -15,14 +15,14 @@ class Output extends Writable {
 const instances: ReturnType<typeof render>[] = [];
 afterEach(() => { for (const instance of instances.splice(0)) instance.unmount(); });
 
-async function manager(servers: McpServerConfig[] = []) {
+async function manager(servers: McpServerConfig[] = [], width = 100, height = 34) {
   const list = vi.fn(async () => servers);
   const run = vi.fn<NonNullable<React.ComponentProps<typeof McpManager>['service']>['run']>(async () => 'Saved');
   const onClose = vi.fn();
   const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: () => void; ref: () => void; unref: () => void };
   stdin.isTTY = true; stdin.setRawMode = () => {}; stdin.ref = () => {}; stdin.unref = () => {};
-  const stdout = new Output();
-  const instance = render(<McpManager project="/project" width={100} height={34} onClose={onClose} service={{ list, run }} />, {
+  const stdout = Object.assign(new Output(), { columns: width, rows: height + 1 });
+  const instance = render(<McpManager project="/project" width={width} height={height} onClose={onClose} service={{ list, run }} />, {
     stdin, stdout, stderr: new PassThrough(), patchConsole: false, alternateScreen: false, maxFps: 1000,
   });
   instances.push(instance);
@@ -129,4 +129,16 @@ it('refreshes saved configuration after a native command fails and aborts pendin
   await ui.send('\r'); await ui.send('\r');
   ui.instance.unmount();
   expect(ui.run.mock.calls.at(-1)?.[2]?.signal?.aborted).toBe(true);
+});
+
+it.each([40, 80, 140])('keeps MCP choices and navigation visible at %i columns', async width => {
+  const ui = await manager([], width, 18);
+  expect(ui.frame()).toContain('Add server');
+  expect(ui.frame()).toContain('Esc close');
+  await ui.send('\r');
+  expect(ui.frame()).toContain('Enter');
+  expect(ui.frame()).toContain('Esc cancel');
+  await ui.send('\x1b');
+  await ui.send('\x1b');
+  expect(ui.onClose).toHaveBeenCalledOnce();
 });

@@ -23,8 +23,8 @@ export type BottomPanelProps = {
   usageError?: string;
 };
 
-export const TWO_COLUMN_MIN_WIDTH = 78;
-export const THREE_COLUMN_MIN_WIDTH = 118;
+export { TWO_COLUMN_MIN_WIDTH, THREE_COLUMN_MIN_WIDTH } from "./layout.js";
+import { terminalLayout } from "./layout.js";
 
 export function BottomPanel({
   width,
@@ -36,9 +36,10 @@ export function BottomPanel({
   usageLimits,
   usageError,
 }: BottomPanelProps) {
+  const layout = terminalLayout(width, height);
   const hasConversations = showConversations ?? (!!conversations && (conversations.choices.length > 1 || conversations.focused));
   const hasQueued = queuedPrompts.length > 0;
-  const queuedItems = height < 24 ? 2 : 4;
+  const queuedItems = layout.short ? 2 : 4;
   // Reserve space for composer, status, panel borders and section headers.
   const conversationItems = pendingInteraction ? 2 : Math.max(2, Math.min(8, Math.floor((height - 12) / 3)));
 
@@ -95,7 +96,7 @@ export function BottomPanel({
 
   // Case 2: Two panels (Priority 1/2 + Usage)
   if (panels.length === 2) {
-    if (width >= TWO_COLUMN_MIN_WIDTH) {
+    if (layout.columns >= 2) {
       const gap = 1;
       const col1Width = Math.floor((width - gap) / 2);
       const col2Width = width - col1Width - gap;
@@ -115,7 +116,7 @@ export function BottomPanel({
   }
 
   // Case 3: Three panels (Conversations + Queued + Usage)
-  if (width >= THREE_COLUMN_MIN_WIDTH) {
+  if (layout.columns >= 3) {
     const gap = 1;
     const colWidth = Math.floor((width - gap * 2) / 3);
     const lastWidth = width - colWidth * 2 - gap * 2;
@@ -129,7 +130,7 @@ export function BottomPanel({
   }
 
   // Intermediate width: 2 columns on top, Usage on bottom
-  if (width >= TWO_COLUMN_MIN_WIDTH) {
+  if (layout.columns >= 2) {
     const gap = 1;
     const col1Width = Math.floor((width - gap) / 2);
     const col2Width = width - col1Width - gap;

@@ -1,4 +1,5 @@
 import { useApp } from "ink";
+import type { ColorScheme } from "../../shared/colors.js";
 import { useAppState } from "./useAppState.js";
 import { useTerminalDimensions } from "./useTerminalDimensions.js";
 import { useWorkingTip } from "./useWorkingTip.js";
@@ -23,6 +24,12 @@ import { store, project, orchestrator } from "./runtime.js";
 export function useAppController(onClear: () => void) {
   const { exit } = useApp();
   const state = useAppState();
+  const saveTheme = async (scheme: ColorScheme) => {
+    const updated = { ...state.latestConfig.current!, colorScheme: scheme };
+    await store.saveConfig(updated);
+    state.latestConfig.current = updated;
+    state.setConfig(updated);
+  };
   const terminalDimensions = useTerminalDimensions(() => {
     onClear();
     state.setTranscriptRevision(value => value + 1);
@@ -69,8 +76,8 @@ export function useAppController(onClear: () => void) {
     activity: transcript.activity,
     add: transcript.add,
   });
-  const { submit } = createSubmit({
-    state, transcript, queue, routing, completion, sessions, planning, auxiliary, execution, exit,
+  const { submit, submitReviewComment } = createSubmit({
+    state, transcript, queue, routing, completion, sessions, planning, auxiliary, execution, exit, onClear, saveTheme,
   });
   useDeferredTurns({
     state, transcript, queue,
@@ -80,7 +87,7 @@ export function useAppController(onClear: () => void) {
 
   return {
     ...state, ...routing, ...conversations, ...queue, ...completion, ...transcript, ...keyboard, ...usage,
-    ...remote, terminalDimensions, workingTip, memoryStatus, submit, onClear,
+    ...remote, terminalDimensions, workingTip, memoryStatus, submit, submitReviewComment, onClear, saveTheme,
   };
 }
 

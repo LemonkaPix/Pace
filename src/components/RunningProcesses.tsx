@@ -1,3 +1,4 @@
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { displayCommand, summarizeCommand } from "./shell-runner.js";
@@ -13,10 +14,11 @@ export function updateProcesses(processes: RunningProcess[], sessionId: string, 
 }
 
 export function RunningProcesses({ processes, now }: { processes: RunningProcess[]; now: number }) {
+  const theme = useTheme();
   if (!processes.length) return null;
   return <Box flexDirection="column" marginTop={1}>
-    <Text color="#FBBF24">Running processes ({processes.length})</Text>
-    {processes.slice(-4).map(process => <Text key={process.id} color="#94A3B8" wrap="truncate">
+    <Text color={theme.warning}>Running processes ({processes.length})</Text>
+    {processes.slice(-4).map(process => <Text key={process.id} color={theme.muted} wrap="truncate">
       {`  ${summarizeCommand(displayCommand(process.command))} · ${Math.floor((now - process.startedAt) / 1000)}s`}
     </Text>)}
     {processes.length > 4 ? <Text dimColor>{`  +${processes.length - 4} more`}</Text> : null}

@@ -1,10 +1,11 @@
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import type { UsageLimits, UsageWindow } from "../integrations/usage.js";
 
 function windowLabel(window: UsageWindow): string {
   const minutes = window.windowDurationMins;
-  return minutes === null ? "Window" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+  return minutes === null ? "Unknown window" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
 
 function resetLabel(seconds?: number): string | undefined {
@@ -16,41 +17,43 @@ function resetLabel(seconds?: number): string | undefined {
 function Meter({
   label,
   window,
-  compact,
+  width,
   showUsed = true,
 }: {
   label: string;
   window: UsageWindow;
-  compact?: boolean;
+  width?: number;
   showUsed?: boolean;
 }) {
+  const theme = useTheme();
   const used = Math.max(0, Math.min(100, window.usedPercent));
   const left = 100 - used;
-  const blocks = Math.round(left / (compact ? 10 : 5));
-  const empty = Math.max(0, (compact ? 10 : 20) - blocks);
-  const barColor = left < 10 ? "#F87171" : left < 25 ? "#FBBF24" : "#34D399";
+  const barWidth = Math.max(0, Math.min(20, (width ?? 80) - 4 - label.length - 3 - 10 - (showUsed ? 13 : 0)));
+  const blocks = Math.round(left / 100 * barWidth);
+  const empty = Math.max(0, barWidth - blocks);
+  const barColor = left < 10 ? theme.error : left < 25 ? theme.warning : theme.success;
   const reset = resetLabel(window.resetsAt);
 
   return (
     <Box flexDirection="column">
-      <Box gap={1}>
-        <Box flexShrink={0}><Text color="#94A3B8" bold>
+      <Box gap={1} flexDirection={width !== undefined && width < 32 ? "column" : "row"}>
+        <Box flexShrink={0}><Text color={theme.muted} bold>
           [{label}]
         </Text></Box>
-        <Box flexShrink={0}><Text>
+        {barWidth > 0 ? <Box flexShrink={0}><Text>
           <Text color={barColor}>{"█".repeat(blocks)}</Text>
-          <Text color="#334155">{"█".repeat(empty)}</Text>
-        </Text></Box>
+          <Text color={theme.border}>{"░".repeat(empty)}</Text>
+        </Text></Box> : null}
         <Box flexShrink={0}><Text color={barColor} bold>
           {left.toFixed(0)}% left
         </Text></Box>
         {showUsed ? (
-          <Box flexShrink={0}><Text color="#64748B">
+          <Box flexShrink={0}><Text color={theme.dim}>
             ({used.toFixed(0)}% used)
           </Text></Box>
         ) : null}
       </Box>
-      {reset ? <Text color="#94A3B8" wrap="wrap">{reset}</Text> : null}
+      <Text color={theme.muted} wrap="wrap">{reset ?? "Reset time unavailable"}</Text>
     </Box>
   );
 }
@@ -66,16 +69,17 @@ export function UsageBar({
   width?: number;
   marginTop?: number;
 }) {
-  const compact = width !== undefined && width < 50;
-  const showUsed = width === undefined || width >= 42;
+  const theme = useTheme();
+  const showUsed = width === undefined || width >= 60;
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="#334155" paddingX={1} width={width} marginTop={marginTop}>
-      <Text color="#59E6A7" bold>◈ Codex Usage</Text>
-      {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} compact={compact} showUsed={showUsed} /> : null}
-      {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} compact={compact} showUsed={showUsed} /> : null}
-      {error && (limits?.primary || limits?.secondary) ? <Text color="gray">{error} · showing last reading</Text> : null}
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1} width={width} marginTop={marginTop}>
+      <Text color={theme.secondary} bold>◈ Codex Usage</Text>
+      <Text color={theme.muted}>Account limits</Text>
+      {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} width={width} showUsed={showUsed} /> : null}
+      {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} width={width} showUsed={showUsed} /> : null}
+      {error && (limits?.primary || limits?.secondary) ? <Text color={theme.dim}>{error} · showing last reading</Text> : null}
       {!limits?.primary && !limits?.secondary ? (
-        <Text color="gray">{error ?? "Loading usage…"}</Text>
+        <Text color={theme.dim}>{error ?? (limits ? "Account limits unavailable" : "Loading usage…")}</Text>
       ) : null}
     </Box>
   );

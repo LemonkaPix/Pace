@@ -1,3 +1,4 @@
+import { useTheme } from "../../shared/colors.js";
 import React, { useMemo } from "react";
 import { Box, Static, Text } from "ink";
 import { join } from "node:path";
@@ -16,12 +17,15 @@ import { readClipboardText, saveClipboardImage } from "../pasted-images.js";
 import { QuestionPanel } from "../QuestionPanel.js";
 import { RunningProcesses } from "../RunningProcesses.js";
 import { TaskPanel } from "../TaskPanel.js";
+import { ThemeManager } from "../ThemeManager.js";
 import { Transcript, splitTranscript, type Line } from "../Transcript.js";
+import { terminalLayout } from "../layout.js";
 import { WorkingStatus } from "../WorkingStatus.js";
 import type { AppController } from './useAppController.js';
 import { store, project } from './runtime.js';
 
 export function AppView({ model }: { model: AppController }) {
+  const theme = useTheme();
   const {
     lines, staticHistory, session, transcriptRevision, showHeader, vexState, terminalDimensions, busy,
     liveUsage, workingTip, diffOpen, setDiffOpen, onClear, setTranscriptRevision, setSession,
@@ -55,10 +59,22 @@ export function AppView({ model }: { model: AppController }) {
   ];
   const terminalColumns = terminalDimensions.columns;
   const terminalRows = terminalDimensions.rows;
-  const contentWidth = Math.max(20, terminalColumns - 2);
+  const contentWidth = terminalLayout(terminalColumns, terminalRows).contentWidth;
   const composerChromeRows = (contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5) + (model.memoryStatus.enabled ? 1 : 0);
   const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
   const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - extraWorkingRows - 1);
+
+  const visibleLiveLines = liveLines.slice(-Math.max(1, Math.floor((terminalRows - 12) / 4)));
+  const hasVisibleActivity = visibleLiveLines.some(line => line.activity && !line.activity.completed);
+
+  if (model.themeOpen) return <ThemeManager scheme={config?.colorScheme ?? "default"}
+    width={terminalColumns} height={Math.max(1, terminalRows - 1)}
+    onClose={() => { model.setThemeOpen(false); onClear(); setTranscriptRevision(value => value + 1); }}
+    onSave={async scheme => {
+      await model.saveTheme(scheme);
+      model.setThemeOpen(false); onClear(); setTranscriptRevision(value => value + 1);
+      add("info", `Color scheme: ${scheme}.`);
+    }} />;
 
   if (model.remoteOpen) return <RemoteManager width={terminalColumns} height={Math.max(1, terminalRows - 1)}
     status={model.remoteStatus} logs={model.remoteLogs} pairing={model.remotePairing} conflict={model.remoteConflict} error={model.remoteError}
@@ -72,7 +88,10 @@ export function AppView({ model }: { model: AppController }) {
 
   if (diffOpen && session) return <FileDiffPanel store={store} session={session} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
     onClose={() => { setDiffOpen(false); onClear(); setTranscriptRevision(value => value + 1); }}
-    onChange={updated => { setSession({ ...updated }); rememberSession(updated); }} />;
+    onChange={updated => { setSession({ ...updated }); rememberSession(updated); }}
+    onBusyChange={value => { model.historyBusy.current = value; model.setHistoryChanging(value); }}
+    isActive={() => [...model.jobs.current.values()].some(job => job.session.projectPath === session.projectPath) || !!model.sideAbort.current || !!shellJobs}
+    onComment={model.submitReviewComment} />;
 
   if (mcpOpen && session) return <McpManager key={session.projectPath} project={session.projectPath} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
     onClose={() => { setMcpOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
@@ -92,23 +111,23 @@ export function AppView({ model }: { model: AppController }) {
       </Static>
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
-        <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
+        <Transcript tick={tick} lines={visibleLiveLines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
       </Box>
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} availableModels={availableModels.map(model => model.model)} efforts={menuEfforts} catalogStatus={modelCatalogStatus} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {approvalMenu ? <ApprovalModeMenu selectedIndex={menuIndex} currentMode={config?.approvalMode ?? "request-approval"} /> : null}
       {manualMenu ? <ManualWorkflowMenu title={manualWizard.step === "workflow" ? "Manual workflow" : `${manualWizard.shape} · ${manualStage} · ${manualWizard.step}`} options={manualOptions} selectedIndex={menuIndex} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
-      <WorkingStatus busy={busy} status={status} runningCount={runningIds.length} shellJobs={shellJobs} tick={tick}
+      <WorkingStatus hasActivity={hasVisibleActivity} busy={busy} status={status} runningCount={runningIds.length} shellJobs={shellJobs} tick={tick}
         usage={busy && session ? liveUsage[session.id] : undefined} tip={workingTip} />
-      {backgroundApprovals.length ? <Text color="#FBBF24" bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
-      {backgroundQuestions.length ? <Text color="#A5B4FC" bold>◆ {backgroundQuestions.length} background question{backgroundQuestions.length === 1 ? "" : "s"} waiting · {question ? "Shift+Tab" : "↓"} select conversation · Enter open</Text> : null}
+      {backgroundApprovals.length ? <Text color={theme.warning} bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
+      {backgroundQuestions.length ? <Text color={theme.accent} bold>◆ {backgroundQuestions.length} background question{backgroundQuestions.length === 1 ? "" : "s"} waiting · {question ? "Shift+Tab" : "↓"} select conversation · Enter open</Text> : null}
       <RunningProcesses processes={processes} now={Date.now()} />
       <TaskPanel tasks={session?.tasks ?? []} />
       {approval ? <ApprovalPanel approval={approval} /> : null}
       {question ? <QuestionPanel key={`${session?.id}-${question.id}`} questions={question.questions} onSubmit={question.respond} isActive={!pickerFocused && !approval} /> : null}
-      {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
-      {session?.deferredTurn && !busy ? <Text color="#FBBF24">Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
+      {cancelArmed ? <Text color={theme.warning}>Press Esc again to cancel the turn</Text> : null}
+      {session?.deferredTurn && !busy ? <Text color={theme.warning}>Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
       </Box>
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode} memoryEnabled={model.memoryStatus.enabled} memoryUnavailable={model.memoryStatus.unavailable}>
         <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={(value, opts) => { void submit(value, opts); }} history={history}
@@ -137,6 +156,7 @@ export function AppView({ model }: { model: AppController }) {
             return true;
           }}
           onMoveDown={focusQueuedOrPicker}
+          onMoveLeft={() => { setDiffOpen(true); onClear(); }}
           onQueueEdit={() => handleQueueEdit()}
           onDeleteQueued={handleQueueDelete}
           placeholder={modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}

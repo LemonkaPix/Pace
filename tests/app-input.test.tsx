@@ -37,7 +37,6 @@ function fixture(overrides: Partial<Options> = {}) {
     setSession: vi.fn(), setDraft: vi.fn(), setHistory: vi.fn(),
     setQueueMenu: vi.fn(), setQueueVersion: vi.fn(),
     setPickerSearch: vi.fn(),
-    onUndo: vi.fn(), onRedo: vi.fn(),
   };
   const options = {
     ...events, pickerFocused: false, pickerIndex: 0, openSessions: [session, second],
@@ -362,37 +361,37 @@ describe("application keyboard input", () => {
     expect(events.setQueueMenu).toHaveBeenCalledWith(false);
   });
 
-  it("Ctrl+Z routes through file-aware history restoration", async () => {
-    const { options, events, session } = fixture();
-    session.turns.push({ prompt: "original", result: "done", at: new Date().toISOString() });
-    const ui = await mount(options);
-    await ui.key("z", { ctrl: true });
-    expect(events.onUndo).toHaveBeenCalledOnce();
-    expect(session.turns).toHaveLength(1);
-  });
-
-  it("Ctrl+Z leaves history alone during an active job", async () => {
-    const { options, events, session } = fixture();
-    session.turns.push({ prompt: "original", result: "done", at: new Date().toISOString() });
+  it.each(["", "unfinished draft"])("leaves Left to the composer without changing the draft %j or active turn", async draft => {
+    const { options, events, session } = fixture({ draft });
+    session.turns.push({ prompt: "original", result: "done", at: "now" });
     options.jobs.current.set(session.id, {} as never);
     const ui = await mount(options);
-    await ui.key("z", { ctrl: true });
-    expect(session.turns).toHaveLength(1);
+    await ui.key("", { leftArrow: true });
     expect(events.setDraft).not.toHaveBeenCalled();
-    expect(events.onUndo).not.toHaveBeenCalled();
+    expect(events.renderSessionTurns).not.toHaveBeenCalled();
+    expect(events.interrupt).not.toHaveBeenCalled();
+    expect(options.jobs.current.has(session.id)).toBe(true);
+    expect(session.turns).toHaveLength(1);
   });
 
-  it("Ctrl+Y restores an undone turn and the diff view owns its input", async () => {
+  it("leaves review input to the panel and removes the old conversation undo shortcuts", async () => {
     const { options, events, session } = fixture();
-    session.undoneTurns = [{ prompt: "original", result: "done", at: new Date().toISOString() }];
+    session.turns.push({ prompt: "original", result: "done", at: "now" });
+    session.undoneTurns = [{ prompt: "undone", result: "old", at: "now" }];
     const ui = await mount(options);
+    await ui.key("z", { ctrl: true });
     await ui.key("y", { ctrl: true });
-    expect(events.onRedo).toHaveBeenCalledOnce();
+    expect(events.setDraft).not.toHaveBeenCalled();
+    expect(events.setSession).not.toHaveBeenCalled();
+    expect(session.turns).toHaveLength(1);
+    expect(session.undoneTurns).toHaveLength(1);
     ui.instance.unmount();
     options.diffOpen = true;
-    const diff = await mount(options);
-    await diff.key("y", { ctrl: true });
-    expect(events.onRedo).toHaveBeenCalledOnce();
+    const review = await mount(options);
+    await review.key("", { leftArrow: true });
+    await review.key("", { escape: true });
+    await review.key("c", { ctrl: true });
+    expect(events.interrupt).not.toHaveBeenCalled();
   });
 
   it("conversation menu rewinds to the selected turn and restores its prompt", async () => {

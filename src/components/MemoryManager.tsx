@@ -1,3 +1,6 @@
+import { useTheme } from "../shared/colors.js";
+import { PanelFrame } from "./PanelFrame.js";
+import { terminalLayout } from "./layout.js";
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { TextInput } from '@inkjs/ui';
@@ -12,6 +15,7 @@ type Screen = 'loading' | 'intro' | 'installation' | 'location' | 'path' | 'revi
 export function MemoryManager({ project, baseDir, width, height, onClose, service = memorySetupService }: {
   project: string; baseDir: string; width: number; height: number; onClose: () => void; service?: MemorySetupService;
 }) {
+  const theme = useTheme();
   const [state, setState] = useState<MemoryState>({ state: 'unconfigured' });
   const [screen, setScreen] = useState<Screen>('loading'), [index, setIndex] = useState(0);
   const [detected, setDetected] = useState<Awaited<ReturnType<MemorySetupService['detect']>>>({});
@@ -113,11 +117,16 @@ export function MemoryManager({ project, baseDir, width, height, onClose, servic
       });
     }
   });
-  return <Box flexDirection="column" width={width} height={Math.max(10, height)} paddingX={1} overflowY="hidden">
-    <Text bold color="#A5B4FC">{screen === 'global' || screen === 'preferences' ? 'Global memory · user preferences' : `Project memory · ${screen === 'panel' ? state.state : 'setup'}`}</Text>
-    {screen === 'global' || screen === 'preferences' ? <><Text>Shared across repos · {global?.enabled ? 'enabled' : 'disabled'} · no backend installation required.</Text><Text>Only you edit this short preference card. Agents cannot promote repo findings into global memory. Permissions remain controlled by Pace.</Text><Text>Preferences ({GLOBAL_MEMORY_BYTES} UTF-8 bytes maximum): {global?.content || '(empty)'}</Text>{globalError ? <Text color="red">{globalError}</Text> : null}</> : null}
+  const listRows = terminalLayout(width, height).listRows;
+  const listStart = Math.max(0, index - listRows + 1);
+  return <PanelFrame width={width} height={height} actions={<>
+      {busy ? <Text color={theme.warning}>{busy} · Esc cancels</Text> : choices.slice(listStart, listStart + listRows).map((choice, offset) => <Text key={choice} color={listStart + offset === index ? theme.secondary : undefined}>{listStart + offset === index ? '❯' : ' '} {choice}</Text>)}
+    {error ? <Text color={theme.error}>{error}</Text> : null}{message ? <Text>{message}</Text> : null}
+    </>} footer={<>↑/↓ select · Enter choose · Esc {busy ? 'cancel operation' : 'close'}</>}>
+    <Text bold color={theme.accent}>{screen === 'global' || screen === 'preferences' ? 'Global memory · user preferences' : `Project memory · ${screen === 'panel' ? state.state : 'setup'}`}</Text>
+    {screen === 'global' || screen === 'preferences' ? <><Text>Shared across repos · {global?.enabled ? 'enabled' : 'disabled'} · no backend installation required.</Text><Text>Only you edit this short preference card. Agents cannot promote repo findings into global memory. Permissions remain controlled by Pace.</Text><Text>Preferences ({GLOBAL_MEMORY_BYTES} UTF-8 bytes maximum): {global?.content || '(empty)'}</Text>{globalError ? <Text color={theme.error}>{globalError}</Text> : null}</> : null}
     {screen === 'preferences' ? <><Text>Enter saves; Esc preserves the previous card. Empty text clears preferences.</Text><TextInput defaultValue={global?.content ?? ''} onSubmit={content => { void saveGlobal(content.trim(), global?.enabled ?? true); }} /></> : null}
-    {screen === 'intro' ? <><Text>Optional local Basic Memory for this project. Pace controls project scope, agent roles and provenance.</Text><Text>Notes remain yours. Cancel and disable preserve them. Current code and user instructions take precedence over historical memory.</Text>{state.state === 'configuring' ? <Text color="yellow">Previous setup is incomplete; it is not an empty ready database.</Text> : null}</> : null}
+    {screen === 'intro' ? <><Text>Optional local Basic Memory for this project. Pace controls project scope, agent roles and provenance.</Text><Text>Notes remain yours. Cancel and disable preserve them. Current code and user instructions take precedence over historical memory.</Text>{state.state === 'configuring' ? <Text color={theme.warning}>Previous setup is incomplete; it is not an empty ready database.</Text> : null}</> : null}
     {screen === 'installation' ? <><Text>Basic Memory {BASIC_MEMORY_VERSION} requires Python ≥3.12 and is licensed AGPL-3.0-or-later.</Text><Text>Installation uses uv in {memoryRoot(baseDir)}/runtime. It may download Python, packages and a local embedding model. Ordinary npm install never does this.</Text><Text>uv: {detected.uv ?? 'missing'} · Python: {detected.python ?? 'not detected'}</Text></> : null}
     {screen === 'path' ? <><Text>{existing ? 'Existing notes directory (must exist)' : 'New notes directory'} · Enter empty for {directory || 'no default'}</Text><TextInput key={String(existing)} onSubmit={value => {
       const chosen = value.trim() ? resolve(value.trim()) : directory;
@@ -129,9 +138,6 @@ export function MemoryManager({ project, baseDir, width, height, onClose, servic
     }} /></> : null}
     {screen === 'review' ? <><Text>Project: {project}</Text><Text>Notes: {directory}</Text><Text>Backend: {detected.executable ?? `Install Basic Memory ${BASIC_MEMORY_VERSION} with uv under ${memoryRoot(baseDir)}/runtime`}</Text><Text>Pace will create a separate backend configuration and index this directory. A uniquely named temporary write/read probe is deleted after checking. Previous ready settings remain until success.</Text></> : null}
     {screen === 'panel' ? <><Text>Backend: Basic Memory {BASIC_MEMORY_VERSION}</Text><Text>Project: {state.config?.backendProject ?? 'configuration unavailable'}</Text><Text>Location: {state.config?.dataDirectory ?? 'unknown'}</Text><Text>{state.error ?? 'Zero notes is a valid ready database. Enable/disable preserves all notes.'}</Text></> : null}
-    {busy ? <Text color="yellow">{busy} · Esc cancels</Text> : choices.map((choice, i) => <Text key={choice} color={index === i ? '#59E6A7' : undefined}>{index === i ? '❯' : ' '} {choice}</Text>)}
-    {error ? <Text color="red">{error}</Text> : null}{message ? <Text>{message}</Text> : null}
     {output ? <Text dimColor>{output.split('\n').slice(-Math.max(1, Math.min(4, height - 14))).join('\n')}</Text> : null}
-    <Box flexGrow={1}/><Text dimColor>↑/↓ select · Enter choose · Esc {busy ? 'cancel operation' : 'close'}</Text>
-  </Box>;
+  </PanelFrame>;
 }

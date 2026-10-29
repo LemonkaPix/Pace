@@ -1,3 +1,5 @@
+import { terminalLayout } from "./layout.js";
+import { useTheme } from "../shared/colors.js";
 import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { stripVTControlCharacters } from 'node:util';
@@ -29,6 +31,8 @@ export function RemoteManager({ width, height, status, logs, pairing, conflict, 
   onStart: (confirmed?: RemoteLockError) => Promise<void>; onStop: () => Promise<void>;
   onPair: () => void; onClose: () => void;
 }) {
+  const theme = useTheme();
+  const narrow = terminalLayout(width, height).narrow;
   const [override, setOverride] = useState(false);
   const [showLogs, setShowLogs] = useState(!pairing);
   const [top, setTop] = useState<number>();
@@ -42,7 +46,10 @@ export function RemoteManager({ width, height, status, logs, pairing, conflict, 
   }, [pairing?.token]);
   const contentWidth = Math.max(1, width - 2);
   const rows = useMemo(() => wrapRemoteLogs(logs, contentWidth), [logs, contentWidth]);
-  const page = Math.max(1, height - 5);
+  const navigation = conflict ? '↑/↓ choose · Enter confirm · Esc keep existing session' : narrow ? 'P pair · L logs · R start · S stop' : 'P pair · L QR/logs · ↑/↓ PgUp/PgDn scroll · Home/End · R start · S stop';
+  const closeHint = narrow ? '↑/↓ scroll · Esc chat' : 'Esc closes this screen · host and logs continue in background · /remote reopens';
+  const footerRows = Math.ceil(stringWidth(navigation) / contentWidth) + Math.ceil(stringWidth(closeHint) / contentWidth);
+  const page = Math.max(1, height - 3 - footerRows);
   const lastTop = Math.max(0, rows.length - page);
   const start = Math.min(top ?? lastTop, lastTop);
   const code = useMemo(() => {
@@ -74,27 +81,29 @@ export function RemoteManager({ width, height, status, logs, pairing, conflict, 
     }
   });
   return <Box flexDirection="column" width={width} height={height} paddingX={1} overflowY="hidden">
-    <Text bold color="#A5B4FC" wrap="truncate-end">Remote host</Text>
-    <Text color="#59E6A7" wrap="truncate-end">{status}</Text>
+    <Text bold color={theme.accent} wrap="truncate-end">Remote host</Text>
+    <Text color={theme.secondary} wrap="truncate-end">{status}</Text>
     {conflict ? <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-      <Text color="#FBBF24">Another remote host owns this Pace store (recorded PID {conflict.pid ?? 'unknown'}).</Text>
+      <Text color={theme.warning}>Another remote host owns this Pace store (recorded PID {conflict.pid ?? 'unknown'}).</Text>
       <Text>Override this remote session? Paired clients will disconnect from the previous host.</Text>
       <Text>Live hosts hand over gracefully. A stale lock is removed only after checking its PID.</Text>
-      <Text color={!override ? '#59E6A7' : undefined}>{!override ? '❯' : ' '} Keep existing session</Text>
-      <Text color={override ? '#59E6A7' : undefined}>{override ? '❯' : ' '} Override session</Text>
+      <Text color={!override ? theme.secondary : undefined}>{!override ? '❯' : ' '} Keep existing session</Text>
+      <Text color={override ? theme.secondary : undefined}>{override ? '❯' : ' '} Override session</Text>
     </Box> : <Box flexDirection="column" flexGrow={1} minHeight={0} overflowY="hidden">
-      {error ? <Text color="red">{error}</Text> : null}
-      {pairing && !showLogs ? expired ? <Text color="#FBBF24">Pairing code expired. Press P for a new QR code.</Text>
-        : codeWidth <= contentWidth && codeRows.length + 1 <= height - 4 ? <>
+      {error ? <Text color={theme.error}>{error}</Text> : null}
+      {pairing && !showLogs ? expired ? <Text color={theme.warning}>Pairing code expired. Press P for a new QR code.</Text>
+        : codeWidth <= contentWidth && codeRows.length + 1 <= height - 2 - footerRows ? <>
           <Text wrap="truncate-end">Scan with your phone camera · opens Pace Remote · expires in {Math.max(1, Math.ceil((pairing.expiresAt - now) / 1000))}s</Text>
           <Text color="white" backgroundColor="black">{code}</Text>
-        </> : <Text>Resize terminal to at least {codeWidth + 2} columns × {codeRows.length + 5} rows to show the complete QR code. P renews it.</Text>
+        </> : <Text>Resize terminal to at least {codeWidth + 2} columns × {codeRows.length + 3 + footerRows} rows to show the complete QR code. P renews it.</Text>
         : <>
           <Text dimColor wrap="truncate-end">Logs · {rows.length ? `${start + 1}–${Math.min(rows.length, start + page)} / ${rows.length}` : 'Waiting for activity'} · {top === undefined ? 'following' : 'scroll paused'}</Text>
           {rows.slice(start, start + page).map((row, index) => <Text key={start + index} wrap="truncate-end">{row || ' '}</Text>)}
         </>}
     </Box>}
-    <Text dimColor wrap="truncate-end">{conflict ? '↑/↓ choose · Enter confirm · Esc keep existing session' : 'P pair · L QR/logs · ↑/↓ PgUp/PgDn scroll · Home/End · R start · S stop'}</Text>
-    <Text dimColor wrap="truncate-end">Esc closes this screen · host and logs continue in background · /remote reopens</Text>
+    <Box flexDirection="column" flexShrink={0}>
+      <Text dimColor wrap="wrap">{navigation}</Text>
+      <Text dimColor wrap="wrap">{closeHint}</Text>
+    </Box>
   </Box>;
 }

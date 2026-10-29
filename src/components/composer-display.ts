@@ -1,12 +1,12 @@
 import stringWidth from "string-width";
 import { letterGradients } from "./Transcript.js";
 
-export function paceGradient(column: number, width: number): string {
-  const position = Math.max(0, Math.min(1, column / Math.max(1, width - 1))) * (letterGradients.length - 1);
-  const first = Math.min(Math.floor(position), letterGradients.length - 2);
+export function paceGradient(column: number, width: number, colors: readonly string[] = letterGradients): string {
+  const position = Math.max(0, Math.min(1, column / Math.max(1, width - 1))) * (colors.length - 1);
+  const first = Math.min(Math.floor(position), colors.length - 2);
   const blend = position - first;
-  const start = letterGradients[first]!;
-  const end = letterGradients[first + 1]!;
+  const start = colors[first]!;
+  const end = colors[first + 1]!;
   const channel = (offset: number) => Math.round(
     parseInt(start.slice(offset, offset + 2), 16) * (1 - blend) +
     parseInt(end.slice(offset, offset + 2), 16) * blend,
@@ -67,15 +67,15 @@ export function commandRanges(value: string, registeredCommands: readonly string
   });
 }
 
-type DraftStyle = "bold" | "italic" | "code" | "strike";
+type DraftStyle = "bold" | "italic" | "code" | "strike" | "quote";
 
 export function markdownDraftRanges(value: string): { start: number; end: number; style: DraftStyle }[] {
-  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~)/g;
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~|"[^"\n]+"|'[^'\n]+')/g;
   return [...value.matchAll(pattern)].map(match => {
     const token = match[0];
     const two = token.startsWith("**") || token.startsWith("__") || token.startsWith("~~");
     const edge = two ? 2 : 1;
-    const style: DraftStyle = token.startsWith("`") ? "code" : token.startsWith("~~") ? "strike" : two ? "bold" : "italic";
+    const style: DraftStyle = token.startsWith("`") ? "code" : token.startsWith("~~") ? "strike" : token.startsWith('"') || token.startsWith("'") ? "quote" : two ? "bold" : "italic";
     return { start: match.index + edge, end: match.index + token.length - edge, style };
   });
 }

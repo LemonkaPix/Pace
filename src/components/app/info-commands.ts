@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { COLOR_SCHEMES } from "../../shared/colors.js";
 import { markdownLinks, openLink } from "../../core/system/links.js";
 import { debugTurn } from "../../core/prompt-trace.js";
 import { isDebugBuild } from "../../core/build-mode.js";
@@ -31,7 +32,7 @@ export async function showCommandInfo(command: string, parts: string[], {
     add('info', '/memory opens optional project memory setup, settings, or connection repair. Changes apply to the next agent launch.');
     add(
       "info",
-      "/plan [prompt] · /execute [artifact-id|file] [prompt] · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts [open <id>|folder] · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · /links [number] lists/opens Markdown links · /debug [turn] inspects local prompts · Ctrl+O toggle plan, scout, command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+      `/plan [prompt] · /execute [artifact-id|file] [prompt] · /theme [${COLOR_SCHEMES.join("|")}] · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts [open <id>|folder] · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · ← file review · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · /links [number] lists/opens Markdown links · /debug [turn] inspects local prompts · Ctrl+O toggle plan, scout, command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history`,
     );
     if (isDebugBuild) add("info", "/benchmark opens Benchmark Center (debug only). Preview and results make no model calls; Start requires idle jobs and queues.");
     add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");

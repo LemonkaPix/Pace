@@ -1,3 +1,6 @@
+import { useTheme } from "../shared/colors.js";
+import { PanelFrame } from "./PanelFrame.js";
+import { terminalLayout } from "./layout.js";
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import stringWidth from 'string-width';
@@ -17,6 +20,7 @@ const native={preflight,startRun,resumeRun,previewResume,listResults,resultFiles
 export type BenchmarkService=typeof native;
 type Screen='home'|'categories'|'profiles'|'preview'|'progress'|'results'|'result'|'files'|'file'|'reviews'|'review'|'notes'|'evidence'|'behavior'|'turn-limit'|'dollar-limit'|'repetitions'|'memory-setup';
 export function BenchmarkManager({width,height,onClose,canStart=()=>undefined,service=native,initialResults=false}: {width:number;height:number;onClose:()=>void;canStart?:()=>string|undefined;service?:BenchmarkService;initialResults?:boolean}) {
+  const theme = useTheme();
   const [screen,setScreen]=useState<Screen>(initialResults?'results':'home'),[index,setIndex]=useState(0);
   const [selection,setSelection]=useState<Selection>({category:'fresh-completion',profile:'quick'}),[preview,setPreview]=useState<Preview>(),[resuming,setResuming]=useState(false);
   const [setupProject, setSetupProject] = useState('');
@@ -101,20 +105,22 @@ export function BenchmarkManager({width,height,onClose,canStart=()=>undefined,se
     else if(screen==='evidence'){if(!value.trim())throw new Error('Evidence is required');setReview(r=>({...r,evidence:value}));go('behavior');}
     else {await service.saveReview(runId,item!,{...review,affectedBehavior:value});setItems(await service.reviewItems(runId));go('reviews');}
   });};
-  const rows=Math.max(3,height-14),start=Math.max(0,Math.min(index-Math.floor(rows/2),choices.length-rows));
+  const rows=terminalLayout(width,height).listRows,start=Math.max(0,Math.min(index-Math.floor(rows/2),choices.length-rows));
   if(!isDebugBuild)return <Text>Benchmark Center is available only in a debug build.</Text>;
   if(screen==='memory-setup')return <MemoryManager project={setupProject} baseDir={join(homedir(),'.pace')} width={width} height={height} onClose={()=>go('profiles')}/>;
-  return <Box flexDirection="column" width={width} height={Math.max(10,height)} paddingX={1} overflowY="hidden">
-    <Text bold color="#A5B4FC">Benchmark Center · {screen}{runId&&['result','file','reviews','review'].includes(screen)?` · ${runId}`:''}</Text>
+  return <PanelFrame width={width} height={height} actions={<>
+      {!busy?choices.slice(start,start+rows).map((label,i)=><Text key={i} color={index===start+i?theme.secondary:undefined}>{index===start+i?'❯':' '} {label}</Text>):<Text color={theme.warning}>{screen==='progress'?'Running · Esc cancels only this benchmark':'Working…'}</Text>}
+    {error?<Text color={theme.error}>{error}</Text>:null}
+    </>} footer={<>↑/↓ select / scroll · Enter choose · Esc {operation.current?'cancel run':'back / close'}</>}>
+    <Text bold color={theme.accent}>Benchmark Center · {screen}{runId&&['result','file','reviews','review'].includes(screen)?` · ${runId}`:''}</Text>
     <Text dimColor>Debug checkout · preview/results make no model calls</Text>
-    {preview&&screen==='preview'?<Box flexDirection="column"><Text>{resuming?`Resume ${runId} · `:''}{preview.profile.category}/{preview.profile.name} · {preview.plan.length} trials · {preview.profile.repeats} repeats</Text><Text>{preview.profile.route}</Text><Text>{preview.profile.evaluation}</Text><Text>{preview.estimate}</Text>{resuming?<Text>{output}</Text>:null}{preview.blockedReasons?.map(reason=><Text key={reason} color="yellow">{reason}</Text>)}<Text>{preview.profile.paid?`Time: up to ${preview.profile.timeoutMinutes} min per turn/decision; `:''}Run watchdog {preview.plan.length*preview.profile.timeoutMinutes*8} min</Text><Text>{preview.baselineScope}</Text><Text>{preview.profile.paid?(preview.profile.category==='memory'?"Isolated working copies and shell network. Explicit Start consumes allowance.":"Uncontrolled local experiment. Explicit Start consumes allowance."):"No inference."}</Text></Box>:null}
+    {preview&&screen==='preview'?<Box flexDirection="column"><Text>{resuming?`Resume ${runId} · `:''}{preview.profile.category}/{preview.profile.name} · {preview.plan.length} trials · {preview.profile.repeats} repeats</Text><Text>{preview.profile.route}</Text><Text>{preview.profile.evaluation}</Text><Text>{preview.estimate}</Text>{resuming?<Text>{output}</Text>:null}{preview.blockedReasons?.map(reason=><Text key={reason} color={theme.warning}>{reason}</Text>)}<Text>{preview.profile.paid?`Time: up to ${preview.profile.timeoutMinutes} min per turn/decision; `:''}Run watchdog {preview.plan.length*preview.profile.timeoutMinutes*8} min</Text><Text>{preview.baselineScope}</Text><Text>{preview.profile.paid?(preview.profile.category==='memory'?"Isolated working copies and shell network. Explicit Start consumes allowance.":"Uncontrolled local experiment. Explicit Start consumes allowance."):"No inference."}</Text></Box>:null}
     {screen==='result'?<Text>{output.slice(0,Math.max(100,width*3))}</Text>:null}
     {screen==='review'?<Text>{item?.run.rubric??'Review the raw answer, diff and external checks before grading.'}</Text>:null}
     {screen==='reviews'&&!items.length?<Text>No compatible review format found. Preserve and inspect raw artifacts; no automatic import.</Text>:null}
     {screen==='file'?<Text>{outputLines.slice(offset,offset+outputRows).join('\n')}</Text>:null}
     {screen==='progress'?<Text>{outputLines.slice(-outputRows).join('\n')}</Text>:null}
     {field&&!busy?<Box flexDirection="column"><Text>{field}</Text><TextInput key={screen} onSubmit={submitField}/></Box>:null}
-    {!busy?choices.slice(start,start+rows).map((label,i)=><Text key={i} color={index===start+i?'#59E6A7':undefined}>{index===start+i?'❯':' '} {label}</Text>):<Text color="yellow">{screen==='progress'?'Running · Esc cancels only this benchmark':'Working…'}</Text>}
-    {error?<Text color="red">{error}</Text>:null}<Box flexGrow={1}/><Text dimColor>↑/↓ select / scroll · Enter choose · Esc {operation.current?'cancel run':'back / close'}</Text>
-  </Box>;
+
+  </PanelFrame>;
 }

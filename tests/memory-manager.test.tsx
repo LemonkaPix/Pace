@@ -10,10 +10,10 @@ class Terminal extends Writable { isTTY = true; columns = 120; rows = 40; writes
 const config: MemoryConfig = { version: 1, id: '11111111-1111-4111-8111-111111111111', canonicalPath: '/project', backend: 'basic-memory', backendVersion: '0.24.1', backendProject: 'pace-11111111-1111-4111-8111-111111111111', executable: '/bin/basic-memory', configDirectory: '/store/backend', dataDirectory: '/notes', enabled: true, revision: '22222222-2222-4222-8222-222222222222', setup: 'ready' };
 const instances: ReturnType<typeof render>[] = [];
 afterEach(() => { for (const instance of instances.splice(0)) instance.unmount(); });
-async function mount(state: MemoryState = { state: 'unconfigured' }) {
+async function mount(state: MemoryState = { state: 'unconfigured' }, width = 120, height = 38) {
   const service = { load: vi.fn().mockResolvedValue(state), loadGlobal: vi.fn().mockResolvedValue({}), saveGlobal: vi.fn(async input => ({ ...input, version: 1, revision: config.revision })), detect: vi.fn().mockResolvedValue({ executable: '/bin/basic-memory', uv: '/bin/uv' }), install: vi.fn().mockResolvedValue('/bin/basic-memory'), check: vi.fn().mockResolvedValue(undefined), setup: vi.fn().mockResolvedValue(config), repair: vi.fn().mockResolvedValue(config), toggle: vi.fn(async (value, enabled) => ({ ...value, enabled })) } as unknown as MemorySetupService;
-  const stdout = new Terminal(), stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {}, ref() {}, unref() {} }), onClose = vi.fn();
-  const instance = render(<MemoryManager project="/project" baseDir="/store" width={120} height={38} service={service} onClose={onClose}/>, { stdin, stdout, stderr: new PassThrough(), patchConsole: false, alternateScreen: false, maxFps: 1000 }); instances.push(instance);
+  const stdout = Object.assign(new Terminal(), { columns: width, rows: height + 1 }), stdin = Object.assign(new PassThrough(), { isTTY: true, setRawMode() {}, ref() {}, unref() {} }), onClose = vi.fn();
+  const instance = render(<MemoryManager project="/project" baseDir="/store" width={width} height={height} service={service} onClose={onClose}/>, { stdin, stdout, stderr: new PassThrough(), patchConsole: false, alternateScreen: false, maxFps: 1000 }); instances.push(instance);
   const settle = async () => { await new Promise(resolve => setTimeout(resolve, 10)); await instance.waitUntilRenderFlush(); };
   const send = async (text: string) => { stdin.write(text); if (text === '\x1b') await new Promise(resolve => setTimeout(resolve, 70)); await settle(); };
   await settle(); return { service, frame: () => stdout.writes.join(''), send, onClose, instance };
@@ -61,4 +61,16 @@ it('cancels a global preference edit without replacing the saved card', async ()
   const ui = await mount(); await ui.send('\x1b[B'); await ui.send('\r');
   await ui.send('\x1b[B'); await ui.send('\r'); await ui.send('Unsubmitted preferences'); await ui.send('\x1b');
   expect(ui.service.saveGlobal).not.toHaveBeenCalled(); expect(ui.onClose).not.toHaveBeenCalled();
+});
+
+it.each([40, 80, 140])('keeps memory installation choices visible below long text at %i columns', async width => {
+  const ui = await mount({ state: 'unconfigured' }, width, 18);
+  vi.mocked(ui.service.detect).mockResolvedValue({ uv: '/bin/uv' });
+  await ui.send('\r');
+  expect(ui.frame()).toContain('Check installation again');
+  expect(ui.frame()).toContain('Cancel');
+  expect(ui.frame()).toContain('Esc close');
+  await ui.send('\x1b[B'); await ui.send('\x1b[B'); await ui.send('\r');
+  expect(ui.onClose).toHaveBeenCalledOnce();
+  expect(ui.service.install).not.toHaveBeenCalled();
 });

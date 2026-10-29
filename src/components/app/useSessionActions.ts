@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Session } from "../../shared/types.js";
 import { newSession } from "../../core/sessions.js";
-import { changeConversationHistory } from "../../core/file-history.js";
 import { store, project } from "./runtime.js";
 import type { AppState } from "./useAppState.js";
 import type { createTranscriptActions } from "./transcript-actions.js";
@@ -19,9 +18,9 @@ export function useSessionActions({ state, transcript, queue, conversations, set
 }) {
   const { session, config, jobs, switchingSession, activeSessionId, sessionDrafts, draft,
     thisPaceIds, sessionRecords, unreadCompletions, sessionLines, pendingApprovals, pendingQuestions,
-    sessionStatuses, historyBusy, shellJobs, lastInterruptAt, sideAbort, setSideBusy, setSession,
+    sessionStatuses, shellJobs, lastInterruptAt, sideAbort, setSideBusy, setSession,
     setResumeMenu, setConvoMenu, setPickerFocused, setPickerIndex, setDraft, setShowHeader,
-    setLines, setApproval, setQuestion, setHistory, setStatus, setQueueVersion, setHistoryChanging,
+    setLines, setApproval, setQuestion, setHistory, setStatus, setQueueVersion,
     setOpenSessions, setShowConversationsTab } = state;
   const { add, addFor, renderSessionTurns } = transcript;
   const { promptQueue } = queue;
@@ -121,24 +120,6 @@ export function useSessionActions({ state, transcript, queue, conversations, set
     process.on("SIGINT", onSignal);
     return () => { process.off("SIGINT", onSignal); };
   }, []);
-  const changeHistory = async (direction: "undo" | "redo") => {
-    if (!session || historyBusy.current) return;
-    if (jobs.current.has(session.id) || shellJobs) { add("info", "Wait for running work before changing history."); return; }
-    historyBusy.current = true;
-    setHistoryChanging(true);
-    try {
-      const result = await changeConversationHistory(store, session, direction);
-      if (!result) { add("info", `No turn to ${direction}.`); return; }
-      setSession({ ...session });
-      rememberSession(session);
-      renderSessionTurns(session);
-      setDraft(direction === "undo" ? result.turn.prompt : "");
-      setHistory(session.turns.map(turn => turn.prompt));
-      add("info", `${direction === "undo" ? "Undid" : "Restored"} last turn and ${result.files} file change${result.files === 1 ? "" : "s"}.${!result.turn.fileEdits ? " Conversation only: no file snapshot was saved for this turn." : ""}${direction === "undo" ? " Prompt restored to composer. Use /redo to restore the turn." : ""}`);
-    } catch (error) { add("error", String(error)); }
-    finally { historyBusy.current = false; setHistoryChanging(false); }
-  };
-
   const showFreshSession = (fresh: Session, status: string) => {
     sessionLines.current.set(fresh.id, []);
     setSession(fresh);
@@ -190,5 +171,5 @@ export function useSessionActions({ state, transcript, queue, conversations, set
     }
   };
 
-  return { stopSideQuestion, showFreshSession, activateSession, cancelRetry, interrupt, changeHistory, startNewConversation };
+  return { stopSideQuestion, showFreshSession, activateSession, cancelRetry, interrupt, startNewConversation };
 }

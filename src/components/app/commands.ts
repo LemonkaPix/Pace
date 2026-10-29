@@ -1,9 +1,11 @@
 import { isDebugBuild } from "../../core/build-mode.js";
+import { COLOR_SCHEMES } from "../../shared/colors.js";
 
 export const commands = [
   "/plan",
   "/execute",
   "/verify",
+  "/theme",
   "/models",
   "/mcp",
   "/memory",
@@ -13,9 +15,6 @@ export const commands = [
   "/workflow",
   "/new",
   "/convo",
-  "/undo",
-  "/redo",
-  "/diff",
   "/retry",
   "/cancelretry",
   "/btw",
@@ -41,6 +40,7 @@ export const isRegisteredCommand = (input: string, skillNames: readonly string[]
   return commands.includes(command) || hiddenCommands.includes(command) || skillNames.includes(command);
 };
 export const commandArguments: Record<string, string> = {
+  "/theme": `[${COLOR_SCHEMES.join("|")}]`,
   "/artifacts": "[open <id>|folder]",
   "/plan": "[prompt|file]",
   "/execute": "[id|file] [prompt]",
@@ -60,6 +60,7 @@ export const skillArguments = (skillName: string): string => {
   return "[request]";
 };
 export const commandDescriptions: Record<string, string> = {
+  "/theme": "Preview themes with a diff and conversation, then save",
   "/plan": "Start/toggle planning or load plan file (e.g. /plan plan.md)",
   "/execute": "Execute a conversation artifact ID or plan file in a fresh session",
   "/verify": "Verify plan and propose changes (e.g. /verify [file] [focus prompt])",
@@ -72,9 +73,6 @@ export const commandDescriptions: Record<string, string> = {
   "/workflow": "Choose workflow strategy (single, scout, plan, scout-plan)",
   "/new": "Start a new conversation",
   "/convo": "Browse and manage conversation turns",
-  "/undo": "Revert latest turn and file changes",
-  "/redo": "Restore the last undone turn and file changes",
-  "/diff": "Browse agent file changes and undo or redo individual files",
   "/retry": "Retry the latest failed request in this conversation",
   "/cancelretry": "Cancel automatic retry and clear its queue",
   "/btw": "Ask a read-only side question with a separate agent",

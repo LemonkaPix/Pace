@@ -1,8 +1,10 @@
+import { useTheme } from "../shared/colors.js";
 import React, { useState } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 import type { UserAnswers, UserQuestion } from "../integrations/codex-types.js";
 
 export function QuestionPanel({ questions, onSubmit, isActive = true }: { questions: UserQuestion[]; onSubmit: (answers: UserAnswers) => void; isActive?: boolean }) {
+  const theme = useTheme();
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<UserAnswers>({});
   const [draft, setDraft] = useState("");
@@ -47,14 +49,14 @@ export function QuestionPanel({ questions, onSubmit, isActive = true }: { questi
     }
   }, { isActive });
   if (!question) return null;
-  return <Box flexDirection="column" borderStyle="round" borderColor="#A5B4FC" paddingX={1}>
-    <Text color="#A5B4FC" bold>Agent question {index + 1}/{questions.length} · {question.header}</Text>
+  return <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1}>
+    <Text color={theme.accent} bold>Agent question {index + 1}/{questions.length} · {question.header}</Text>
     <Text wrap="wrap">{question.question}</Text>
     {question.options.map((option, at) => <Box key={at} flexDirection="column">
-      <Text color={selected === at ? "#59E6A7" : undefined}>{selected === at ? "❯ " : "  "}{option.label}</Text>
+      <Text color={selected === at ? theme.secondary : undefined}>{selected === at ? "❯ " : "  "}{option.label}</Text>
       {option.description ? <Text dimColor>  {option.description}</Text> : null}
     </Box>)}
-    {allowsText ? <Text color={selected === -1 ? "#59E6A7" : undefined}>
+    {allowsText ? <Text color={selected === -1 ? theme.secondary : undefined}>
       {selected === -1 ? "❯ " : "  "}{question.options.length ? "Other: " : "Answer: "}{question.isSecret ? "•".repeat(draft.length) : draft}▌
     </Text> : null}
     <Text dimColor>↑/↓ or Tab select · type your answer · Enter send · Esc twice cancel · Shift+Tab conversations</Text>

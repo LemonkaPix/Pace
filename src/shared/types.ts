@@ -34,6 +34,7 @@ export type ContextMeasurement = {
   model?: string;
 };
 export type Config = {
+  colorScheme?: import("./colors.js").ColorScheme;
   models: ModelOption[];
   defaultRoute: Route;
   routingMode: "auto" | "manual";

@@ -1,3 +1,6 @@
+import { useTheme } from "../shared/colors.js";
+import { PanelFrame } from "./PanelFrame.js";
+import { terminalLayout } from "./layout.js";
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { TextInput } from "@inkjs/ui";
@@ -16,6 +19,7 @@ const fields: Partial<Record<Screen, string>> = {
 export function McpManager({ project, width, height, onClose, service = nativeService }: {
   project: string; width: number; height: number; onClose: () => void; service?: Service;
 }) {
+  const theme = useTheme();
   const [servers, setServers] = useState<McpServerConfig[]>([]);
   const [screen, setScreen] = useState<Screen>("list");
   const [index, setIndex] = useState(0);
@@ -134,12 +138,17 @@ export function McpManager({ project, width, height, onClose, service = nativeSe
     }
   });
 
-  const visibleRows = Math.max(3, Math.min(10, height - 12));
+  const visibleRows = terminalLayout(width, height).listRows;
   const start = Math.max(0, Math.min(index - Math.floor(visibleRows / 2), choices.length - visibleRows));
-  return <Box flexDirection="column" paddingX={1} width={width} height={Math.max(8, height)} overflowY="hidden">
-    <Text bold color="#A5B4FC">MCP servers{screen === "actions" || screen === "remove" ? ` · ${selected?.name}` : ""}</Text>
+  return <PanelFrame width={width} height={height} actions={<>
+      {!busy ? choices.slice(start, start + visibleRows).map((label, offset) => <Text key={offset} color={start + offset === index ? theme.secondary : undefined} wrap="truncate-end">{start + offset === index ? "❯" : " "} {label}</Text>) : null}
+    {choices.length > visibleRows ? <Text dimColor>{start + 1}–{Math.min(choices.length, start + visibleRows)} of {choices.length}</Text> : null}
+    {error ? <Text color={theme.error} wrap="wrap">{error}</Text> : null}
+    {message ? <Text color={theme.secondary}>{message}</Text> : null}
+    </>} footer={<>{fields[screen] ? `Enter ${draft ? "continue" : terminalLayout(width).narrow ? "submit / skip" : "submit / skip optional field"}` : terminalLayout(width).narrow ? "↑/↓ select · Enter choose" : "↑/↓ or Tab select · Enter choose"} · Esc {screen === "list" ? "close" : "cancel"}</>}>
+    <Text bold color={theme.accent}>MCP servers{screen === "actions" || screen === "remove" ? ` · ${selected?.name}` : ""}</Text>
     <Text dimColor>Shared with Codex · configuration only; connection health is checked during turns</Text>
-    {busy ? <Text color="#FBBF24">{busy} · Esc cancels this operation</Text> : null}
+    {busy ? <Text color={theme.warning}>{busy} · Esc cancels this operation</Text> : null}
     {screen === "list" && !servers.length && !busy ? <Text>No external MCP servers configured. Select Add server to connect one.</Text> : null}
     {screen === "actions" && selected ? <Text wrap="wrap">{selected.transport.url ?? `${selected.transport.command} ${(selected.transport.args ?? []).join(" ")}`}</Text> : null}
     {screen === "remove" ? <Text>Remove {selected?.name} from your shared Codex configuration?</Text> : null}
@@ -156,12 +165,6 @@ export function McpManager({ project, width, height, onClose, service = nativeSe
       {server.bearer ? <Text>Token from environment: {server.bearer}</Text> : null}
       {server.environment.length ? <Text>Environment: {server.environment.map(value => value.slice(0, value.indexOf("="))).join(", ")}</Text> : null}
     </Box> : null}
-    {!busy ? choices.slice(start, start + visibleRows).map((label, offset) => <Text key={offset} color={start + offset === index ? "#59E6A7" : undefined} wrap="truncate-end">{start + offset === index ? "❯" : " "} {label}</Text>) : null}
-    {choices.length > visibleRows ? <Text dimColor>{start + 1}–{Math.min(choices.length, start + visibleRows)} of {choices.length}</Text> : null}
-    {error ? <Text color="red" wrap="wrap">{error}</Text> : null}
-    {message ? <Text color="#59E6A7">{message}</Text> : null}
     {output ? <Box flexDirection="column" flexShrink={1} overflowY="hidden"><Text wrap="wrap">{output.trim().split("\n").slice(-8).join("\n")}</Text></Box> : null}
-    <Box flexGrow={1} />
-    <Text dimColor>{fields[screen] ? `Enter ${draft ? "continue" : "submit / skip optional field"}` : "↑/↓ or Tab select · Enter choose"} · Esc {screen === "list" ? "close" : "cancel"}</Text>
-  </Box>;
+  </PanelFrame>;
 }

@@ -31,7 +31,7 @@ export function useAppKeyboard({ state, transcript, queue, conversations, routin
   const { add, addFor, renderSessionTurns } = transcript;
   const { promptQueue, queued } = queue;
   const { sortedSessions } = conversations;
-  const { interrupt, cancelRetry, activateSession, changeHistory } = sessions;
+  const { interrupt, cancelRetry, activateSession } = sessions;
   const { startOrTogglePlanning, handleExecutePlan, applyVerification } = planning;
   const focusPicker = () => {
     if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu || approvalMenu || manualMenu) return false;
@@ -73,9 +73,7 @@ export function useAppKeyboard({ state, transcript, queue, conversations, routin
     onTogglePlan: () => { void startOrTogglePlanning(); },
     onExecutePlan: () => { void handleExecutePlan(); },
     onApplyVerification: applyVerification,
-    onUndo: () => { void changeHistory("undo"); },
-    onRedo: () => { void changeHistory("redo"); },
-    diffOpen, modalOpen: mcpOpen || state.benchmarkOpen || state.memoryOpen || state.remoteOpen,
+    diffOpen, modalOpen: mcpOpen || state.benchmarkOpen || state.memoryOpen || state.remoteOpen || state.themeOpen,
   });
   const focusQueuedOrPicker = () => {
     if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu && !manualMenu) {

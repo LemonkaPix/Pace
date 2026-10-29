@@ -1,3 +1,6 @@
+import { terminalLink } from "../core/system/links.js";
+import { ColorSweep, WorkSpinner } from "./WorkingStatus.js";
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { MarkdownText } from "./TranscriptMarkdown.js";
@@ -56,12 +59,12 @@ export function splitTranscript(lines: Line[]): { history: Line[][]; live: Line[
 }
 
 const activityColors = {
-  thinking: "magentaBright",
-  command: "#38BDF8",
-  files: "yellow",
-  tool: "blueBright",
-  search: "blue",
-  plan: "magenta",
+  thinking: "accent",
+  command: "primary",
+  files: "warning",
+  tool: "primary",
+  search: "primary",
+  plan: "accent",
 } as const;
 
 function activityTitle(line: Line, width: number): string {
@@ -91,9 +94,10 @@ function activityTitle(line: Line, width: number): string {
 }
 
 function DiffDetail({ detail, livePreview }: { detail: string; livePreview: boolean }) {
+  const theme = useTheme();
   const lines = detail.slice(-12000).split("\n");
   return <Box flexDirection="column">{(livePreview ? lines.slice(-2) : lines).map((line, index) => (
-    <Text key={index} color={line.startsWith("+") && !line.startsWith("+++") ? "#34D399" : line.startsWith("-") && !line.startsWith("---") ? "#F87171" : "#94A3B8"} wrap={livePreview ? "truncate" : "wrap"}>{line || " "}</Text>
+    <Text key={index} color={line.startsWith("+") && !line.startsWith("+++") ? theme.success : line.startsWith("-") && !line.startsWith("---") ? theme.error : theme.muted} wrap={livePreview ? "truncate" : "wrap"}>{line || " "}</Text>
   ))}</Box>;
 }
 
@@ -103,13 +107,16 @@ export function Transcript({
   detailsExpanded,
   livePreview = false,
   width = 80,
+  tick = 0,
 }: {
   lines: Line[];
   outputsExpanded: boolean;
   detailsExpanded: boolean;
   livePreview?: boolean;
   width?: number;
+  tick?: number;
 }) {
+  const theme = useTheme();
   const displayLines: (Line & { thinkingCount?: number })[] = [];
   for (const line of lines) {
     const previous = displayLines.at(-1);
@@ -144,33 +151,33 @@ export function Transcript({
           width={width}
         >
           {line.role === "plan" || line.role === "handoff" || line.role === "debug" ? (
-            <Box flexDirection="column" borderLeft borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} borderColor="#C084FC" paddingLeft={1}>
-              <Text color="#C084FC" bold>{expanded ? "▾" : "▸"} {line.role === "plan" ? "Execution plan" : line.role === "handoff" ? "Scout handoff · full report sent to completion" : "Local debug trace"} · Ctrl+O {expanded ? "collapse" : "expand"}</Text>
+            <Box flexDirection="column" borderLeft borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} borderColor={theme.accent} paddingLeft={1}>
+              <Text color={theme.accent} bold>{expanded ? "▾" : "▸"} {line.role === "plan" ? "Execution plan" : line.role === "handoff" ? "Scout handoff · full report sent to completion" : "Local debug trace"} · Ctrl+O {expanded ? "collapse" : "expand"}</Text>
               {line.role === "plan" ? <MarkdownText source={expanded ? line.text : line.text.split("\n").slice(0, 9).join("\n")} width={Math.max(10, width - 3)} />
-                : <Text color="#CBD5E1">{expanded ? line.text : line.role === "handoff" ? handoffSummary(line.text) : line.text.split("\n")[0]}</Text>}
+                : <Text color={theme.muted}>{expanded ? line.text : line.role === "handoff" ? handoffSummary(line.text) : line.text.split("\n")[0]}</Text>}
               {!expanded && (line.role !== "plan" || line.text.split("\n").length > 9) ? <Text dimColor>More content folded · Ctrl+O to reveal</Text> : null}
             </Box>
           ) : line.role === "you" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
-                <Text color="#38BDF8" bold>
+                <Text color={theme.primary} bold>
                   ❯ You
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} color="white" width={Math.max(10, width - 10)} />
+                <MarkdownText source={line.text} color={undefined} width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "verify-actions" ? (
-            <Box marginLeft={1} paddingLeft={1} borderLeft borderStyle="round" borderColor="#C084FC" width={Math.max(10, width - 1)}>
-              <Text color="#D8B4FE" bold>◇ Weryfikacja </Text>
-              <Text color="#E9D5FF">{line.text}</Text>
-              {line.action ? <Text color="#C084FC" bold> · [A] Zastosuj poprawki · użyj `v &lt;wiadomość&gt;` dla verifiera</Text> : null}
+            <Box marginLeft={1} paddingLeft={1} borderLeft borderStyle="round" borderColor={theme.accent} width={Math.max(10, width - 1)}>
+              <Text color={theme.muted} bold>◇ Weryfikacja </Text>
+              <Text color={theme.muted}>{line.text}</Text>
+              {line.action ? <Text color={theme.accent} bold> · [A] Zastosuj poprawki · użyj `v &lt;wiadomość&gt;` dla verifiera</Text> : null}
             </Box>
           ) : line.role === "codex" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
-                <Text color="#59E6A7" bold>
+                <Text color={theme.secondary} bold>
                   ◆ Pace
                 </Text>
               </Box>
@@ -181,23 +188,23 @@ export function Transcript({
           ) : line.role === "side" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
-                <Text color="#E879F9" bold>
+                <Text color={theme.accent} bold>
                   ◇ Btw{" "}
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} color="#F5D0FE" width={Math.max(10, width - 10)} />
+                <MarkdownText source={line.text} color={theme.muted} width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "activity" && line.activity ? (
             <Box flexDirection="column" width={width}>
               <Box gap={1} width={width}>
                 <Box flexShrink={0}>
-                  <Text color={!line.activity.completed ? "#64748B" : line.activity.outcome === "failure" ? "#F87171" : "#59E6A7"}>{line.activity.completed ? "■" : "□"}</Text>
+                  <Text color={!line.activity.completed ? theme.dim : line.activity.outcome === "failure" ? theme.error : theme.secondary}>{line.activity.completed ? "■" : <WorkSpinner tick={tick} />}</Text>
                 </Box>
                 <Box flexShrink={1}>
-                  <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={activityColors[line.activity.category]} bold={line.activity.category === "command"}>
-                    ◆ {activityTitle(line, width)}
+                  <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={theme[activityColors[line.activity.category]]} bold={line.activity.category === "command"}>
+                    {!line.activity.completed && !expanded ? <ColorSweep text={({ thinking: "Thinking", command: "Running command", files: "Editing files", search: "Searching", tool: "Using tool", plan: "Updating plan" })[line.activity.category]} tick={tick} /> : <>◆ {activityTitle(line, width)}</>}
                   </Text>
                 </Box>
                 {line.activity.detail ? (
@@ -218,45 +225,45 @@ export function Transcript({
                   borderRight={false}
                   borderTop={false}
                   borderBottom={false}
-                  borderColor="#475569"
+                  borderColor={theme.border}
                   width={width ? Math.max(10, width - 2) : undefined}
                 >
                   {line.activity.category === "files"
                     ? <DiffDetail detail={line.activity.detail} livePreview={preview} />
-                    : <Text color="gray" wrap={preview || line.activity.category === "command" ? "truncate" : "wrap"}>{preview
+                    : <Text color={theme.dim} wrap={preview || line.activity.category === "command" ? "truncate" : "wrap"}>{preview
                       ? line.activity.detail.slice(-500).split("\n").slice(-2).join("\n")
                       : line.activity.category === "command" ? previewCommandDetail(line.activity.detail) : line.activity.detail.slice(-12000)}</Text>}
                 </Box>
               ) : null}
             </Box>
           ) : line.role === "divider" ? (
-            <Text color="#334155">{"─".repeat(dividerLength)}</Text>
+            <Text color={theme.border}>{"─".repeat(dividerLength)}</Text>
           ) : line.role === "meta" ? (
             <Box marginLeft={1} width={width ? Math.max(10, width - 1) : undefined}>
-              <Text color="#64748B">{line.text}</Text>
+              <Text color={theme.dim}>{line.text}</Text>
             </Box>
           ) : line.role === "artifact" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
-                <Text color="#C084FC" bold>
+                <Text color={theme.accent} bold>
                   📦 Artifact:
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <Text color="#DDD6FE" underline wrap="truncate">
-                  {line.text}
+                <Text color={theme.muted} underline wrap="truncate">
+                  {terminalLink(line.text, line.text.replace(/^\[a-[a-f0-9]+\] /, ""))}
                 </Text>
               </Box>
             </Box>
           ) : line.role === "error" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
-                <Text color="#F87171" bold>
+                <Text color={theme.error} bold>
                   ✖ Pace:
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} color="#EF4444" width={Math.max(10, width - 10)} />
+                <MarkdownText source={line.text} color={theme.error} width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "question" || (line.role === "info" && line.text.includes("\nYou:")) ? (
@@ -268,19 +275,19 @@ export function Transcript({
                 <Box flexDirection="column" width={width}>
                   <Box gap={1} width={width}>
                     <Box flexShrink={0}>
-                      <Text color="#A5B4FC" bold>? Clarification:</Text>
+                      <Text color={theme.accent} bold>? Clarification:</Text>
                     </Box>
                     <Box flexGrow={1} flexShrink={1}>
-                      <Text color="#E2E8F0">{question}</Text>
+                      <Text color={theme.muted}>{question}</Text>
                     </Box>
                   </Box>
                   {answer ? (
                     <Box gap={1} marginLeft={2} width={width ? Math.max(10, width - 2) : undefined}>
                       <Box flexShrink={0}>
-                        <Text color="#38BDF8" bold>❯ You:</Text>
+                        <Text color={theme.primary} bold>❯ You:</Text>
                       </Box>
                       <Box flexGrow={1} flexShrink={1}>
-                        <Text color="white">{answer}</Text>
+                        <Text color={undefined}>{answer}</Text>
                       </Box>
                     </Box>
                   ) : null}
@@ -290,15 +297,15 @@ export function Transcript({
           ) : line.role === "system" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
-                <Text color="#A78BFA" bold>◆ System</Text>
+                <Text color={theme.accent} bold>◆ System</Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <Text color="#C4B5FD">{line.text}</Text>
+                <Text color={theme.muted}>{line.text}</Text>
               </Box>
             </Box>
           ) : (
             <Box width={width}>
-              <Text color="gray">{line.text}</Text>
+              <Text color={theme.dim}>{line.text}</Text>
             </Box>
           )}
         </Box>

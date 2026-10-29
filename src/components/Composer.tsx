@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import { ColorSchemeContext, useTheme } from "../shared/colors.js";
+import React, { useContext, useEffect, useRef, useState } from "react";
 import { Box, Text, useInput, usePaste, useStdout } from "ink";
 import {
   deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks,
@@ -36,13 +37,16 @@ type Props = {
   onAutoLaunchToggle?: () => void;
   onHistory?: (direction: "up" | "down") => boolean;
   onMoveDown?: () => boolean;
+  onMoveLeft?: () => void;
   onQueueEdit?: () => string | undefined;
   onDeleteQueued?: () => boolean;
   width?: number;
   maxRows?: number;
 };
 
-export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, registeredCommands = [], placeholder, completion, completionStart, onComplete, onAutoLaunchToggle, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
+export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, registeredCommands = [], placeholder, completion, completionStart, onComplete, onAutoLaunchToggle, onHistory, onMoveDown, onMoveLeft, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
+  const theme = useTheme();
+  const scheme = useContext(ColorSchemeContext);
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(width ?? stdout?.columns ?? 80);
 
@@ -139,7 +143,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     }
     if (key.tab) { if (completion && completionStart !== undefined) { onComplete(); setCursor(completionStart + completion.length); } return; }
     if (key.return) {
-      if (completion && completionStart === 0 && value.trim() !== completion && (value.startsWith("/") || value.startsWith("@"))) {
+      if (completion && completionStart === 0 && value.trim() !== completion.trimEnd() && (value.startsWith("/") || value.startsWith("@"))) {
         onComplete();
         setCursor(completion.length);
         return;
@@ -150,7 +154,11 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
       setHistoryIndex(undefined);
       return;
     }
-    if (key.leftArrow) { setCursor(skipPastedBlock(Math.max(0, cursor - 1), "left", pastedBlocks)); return; }
+    if (key.leftArrow) {
+      if (cursor === 0) onMoveLeft?.();
+      else setCursor(skipPastedBlock(cursor - 1, "left", pastedBlocks));
+      return;
+    }
     if (key.rightArrow) {
       if (!value) {
         const queued = onQueueEdit?.();
@@ -194,7 +202,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
   const styleAt = (index: number) => markdownRanges.find(range => index >= range.start && index < range.end)?.style;
   const isMarker = (index: number) => display.markers.some(marker => index >= marker.start && index < marker.end);
   const isCommand = (index: number) => shellMode || display.value.startsWith("!") || ranges.some(range => index >= range.start && index < range.end);
-  const colorAt = (index: number) => isMarker(index) ? "#A5B4FC" : isCommand(index) ? "#38BDF8" : paceGradient(columns[index]!, terminalWidth);
+  const colorAt = (index: number) => isMarker(index) ? theme.accent : isCommand(index) ? theme.primary : theme.primary && theme.secondary && theme.accent ? paceGradient(columns[index]!, terminalWidth, scheme === "default" ? undefined : [theme.secondary, theme.accent, theme.primary]) : undefined;
   const columns = inputColumns(display.value, terminalWidth, shellMode);
   const renderText = (text: string, start: number) => {
     let position = start;
@@ -208,7 +216,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
         const cuts = [begin, position, ...markdownRanges.flatMap(range => [range.start, range.end]).filter(index => index > begin && index < position)].sort((a, b) => a - b);
         return cuts.slice(0, -1).map((index, offset) => {
           const style = styleAt(index);
-          return <Text key={index} color={style === "code" ? "#FBBF24" : colorAt(index)} bold={isCommand(index) || style === "bold"} italic={style === "italic"} dimColor={style === "strike"} backgroundColor={style === "code" ? "#1E293B" : undefined}>{part.slice(index - begin, cuts[offset + 1]! - begin)}</Text>;
+          return <Text key={index} color={style === "code" || style === "quote" ? theme.warning : colorAt(index)} bold={isCommand(index) || style === "bold"} italic={style === "italic"} dimColor={style === "strike"} backgroundColor={style === "code" ? theme.codeBg : undefined}>{part.slice(index - begin, cuts[offset + 1]! - begin)}</Text>;
         });
       });
   };
@@ -224,11 +232,11 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
         {shellMode ? (
           <Box marginRight={1}>
             <Text backgroundColor="#D97706" color="#000000" bold> BASH </Text>
-            <Text color="#FBBF24" bold> !</Text>
+            <Text color={theme.warning} bold> !</Text>
           </Box>
         ) : (
           <Box marginRight={1}>
-            <Text color="#59E6A7" bold>❯</Text>
+            <Text color={theme.secondary} bold>❯</Text>
           </Box>
         )}
         <Box flexGrow={1} flexShrink={1} minWidth={1} flexDirection="column">
@@ -241,11 +249,11 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
             return <Text key={start} wrap="truncate">
               {isEmptyLine ? " " : null}
               {display.value ? renderText(before, start) : null}
-              {hasCursor ? <Text inverse color={display.value ? colorAt(display.cursor) : "gray"}>
+              {hasCursor ? <Text inverse color={display.value ? colorAt(display.cursor) : theme.dim}>
                 {display.value ? <Text bold={isCommand(display.cursor) || styleAt(display.cursor) === "bold"} italic={styleAt(display.cursor) === "italic"} dimColor={styleAt(display.cursor) === "strike"}>{at}</Text> : placeholder[0] ?? " "}
               </Text> : null}
-              {display.value ? renderText(after, hasCursor ? display.cursor + (display.cursor < end ? 1 : 0) : end) : <Text color="gray">{placeholder.slice(1)}</Text>}
-              {hasCursor && hasGhost ? <Text color="#64748B" italic>{ghostText}<Text color="#475569" dimColor> (Tab)</Text></Text> : null}
+              {display.value ? renderText(after, hasCursor ? display.cursor + (display.cursor < end ? 1 : 0) : end) : <Text color={theme.dim}>{placeholder.slice(1)}</Text>}
+              {hasCursor && hasGhost ? <Text color={theme.dim} italic>{ghostText}<Text color={theme.border} dimColor> (Tab)</Text></Text> : null}
             </Text>;
           })}
         </Box>

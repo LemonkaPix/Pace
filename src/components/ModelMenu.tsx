@@ -1,3 +1,4 @@
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import { EFFORTS } from "../shared/config.js";
@@ -23,15 +24,16 @@ export function ModelMenu({
   selectedIndex: number;
   config?: Config;
 }) {
+  const theme = useTheme();
   const items = mode === "models" ? models : efforts;
   const { start, end } = menuWindow(items.length, selectedIndex);
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="#34D399" paddingX={1} marginBottom={1}>
-      <Text color="#59E6A7" bold>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.success} paddingX={1} marginBottom={1}>
+      <Text color={theme.secondary} bold>
         ◈ {mode === "models" ? "Codex Models" : `${selectedModel} Reasoning Levels`}
       </Text>
-      {mode === "models" && catalogStatus === "loading" ? <Text color="#64748B">Refreshing Codex models…</Text> : null}
-      {mode === "models" && catalogStatus === "unavailable" ? <Text color="#FBBF24">Codex model list unavailable; showing saved and priced models.</Text> : null}
+      {mode === "models" && catalogStatus === "loading" ? <Text color={theme.dim}>Refreshing Codex models…</Text> : null}
+      {mode === "models" && catalogStatus === "unavailable" ? <Text color={theme.warning}>Codex model list unavailable; showing saved and priced models.</Text> : null}
       {items.slice(start, end).map((item, offset) => {
         const index = start + offset;
         const configured = config?.models.find(
@@ -44,27 +46,27 @@ export function ModelMenu({
         const selected = index === selectedIndex;
         return (
           <Box key={item} gap={1}>
-            <Text color={selected ? "#38BDF8" : "gray"} bold={selected}>
+            <Text color={selected ? theme.primary : theme.dim} bold={selected}>
               {selected ? "▶" : " "}
             </Text>
-            <Text color={enabled ? "#34D399" : "#64748B"} bold={enabled}>
+            <Text color={enabled ? theme.success : theme.dim} bold={enabled}>
               {enabled ? "●" : "○"}
             </Text>
-            <Text color={selected ? "#F0FDF4" : "white"} bold={selected}>
+            <Text color={selected ? undefined : undefined} bold={selected}>
               {item}
             </Text>
             {mode === "models" && configured ? (
-              <Text color="#64748B">({configured.efforts.join(", ")})</Text>
+              <Text color={theme.dim}>({configured.efforts.join(", ")})</Text>
             ) : null}
             {mode === "models" && catalogStatus === "ready" && !availableModels.includes(item) ? (
-              <Text color="#FBBF24">(access unverified)</Text>
+              <Text color={theme.warning}>(access unverified)</Text>
             ) : null}
           </Box>
         );
       })}
-      {items.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {items.length}</Text> : null}
+      {items.length > 5 ? <Text color={theme.dim}>{start + 1}–{end} of {items.length}</Text> : null}
       <Box marginTop={1}>
-        <Text color="#64748B">
+        <Text color={theme.dim}>
           {mode === "models"
             ? "↑/↓ or Tab select · Space toggle · Enter edit reasoning · Esc close"
             : "↑/↓ or Tab select · Space/Enter toggle · M use manually · Esc back"}

@@ -42,7 +42,7 @@ export function formatLiveUsage(usage: Usage, route: Route): string {
   let cost: number | undefined;
   try { cost = costForUsage(route, usage); }
   catch { cost = undefined; }
-  return `${compact(usage.input_tokens)} input · ${compact(usage.output_tokens)} output${cost === undefined ? "" : ` · ~$${cost.toFixed(4)}`}`;
+  return `${compact(usage.input_tokens)} input tokens · ${compact(usage.output_tokens)} output tokens · ${cost === undefined ? "API estimate unavailable" : `~$${cost.toFixed(4)} API est. (USD)`}`;
 }
 
 function routeSource(note?: string): string {
@@ -81,10 +81,10 @@ export function formatTurnFooter(
     first.push(`${(durationMs / 1000).toFixed(1)}s`);
   if (usage)
     first.push(
-      `${compact(usage.input_tokens)} input`,
-      `${compact(usage.output_tokens)} output`,
+      `${compact(usage.input_tokens)} input tokens`,
+      `${compact(usage.output_tokens)} output tokens`,
     );
-  if (estimatedCostUsd !== undefined) first.push(`~$${estimatedCostUsd.toFixed(4)}`);
+  if (estimatedCostUsd !== undefined) first.push(`~$${estimatedCostUsd.toFixed(4)} API est. (USD)`);
   const second = [
     usage ? `Cache: ${compact(usage.cached_input_tokens)} hit, ${compact(usage.cache_write_input_tokens)} write` : undefined,
     `Route: ${routeSource(note)} → ${model}`,

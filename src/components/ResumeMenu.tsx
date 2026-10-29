@@ -1,3 +1,4 @@
+import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
 import type { Session } from "../shared/types.js";
@@ -16,6 +17,7 @@ export function ResumeMenu({
   processIds?: string[];
   missingProjectPaths?: string[];
 }) {
+  const theme = useTheme();
   const processChoices = choices.filter(choice => processIds.includes(choice.id));
   const globalChoices = choices.filter(choice => !processIds.includes(choice.id));
   const orderedChoices = [...processChoices, ...globalChoices];
@@ -30,12 +32,12 @@ export function ResumeMenu({
     const missing = missingProjectPaths.includes(choice.projectPath);
     return (
       <Box key={choice.id} gap={1}>
-        <Text color={selected ? "#38BDF8" : "gray"} bold={selected}>{selected ? "▶" : " "}</Text>
-        <Text color={selected ? "#38BDF8" : "#94A3B8"} bold={selected}>{choice.id.slice(0, 8)}</Text>
-        <Text color="#64748B">{choice.updatedAt.slice(0, 16).replace("T", " ")}</Text>
-        {missing ? <Text color="#F87171">(unavailable)</Text> : null}
-        <Text color={selected ? "white" : "#CBD5E1"}>{shortPrompt}</Text>
-        {runningIds.includes(choice.id) ? <Text color="#FBBF24">(running)</Text> : null}
+        <Text color={selected ? theme.primary : theme.dim} bold={selected}>{selected ? "▶" : " "}</Text>
+        <Text color={selected ? theme.primary : theme.muted} bold={selected}>{choice.id.slice(0, 8)}</Text>
+        <Text color={theme.dim}>{choice.updatedAt.slice(0, 16).replace("T", " ")}</Text>
+        {missing ? <Text color={theme.error}>(unavailable)</Text> : null}
+        <Text color={selected ? undefined : theme.muted}>{shortPrompt}</Text>
+        {runningIds.includes(choice.id) ? <Text color={theme.warning}>(running)</Text> : null}
       </Box>
     );
   };
@@ -44,7 +46,7 @@ export function ResumeMenu({
     for (const choice of items) groups.set(choice.projectPath, [...(groups.get(choice.projectPath) ?? []), choice]);
     return [...groups].map(([path, sessions]) => (
       <React.Fragment key={path}>
-        <Text color={missingProjectPaths.includes(path) ? "#F87171" : "#94A3B8"}>
+        <Text color={missingProjectPaths.includes(path) ? theme.error : theme.muted}>
           {resolveRepoTitle(path, choices.map(choice => choice.projectPath)).title} {missingProjectPaths.includes(path) ? "(missing; use pace reconnect)" : ""}
         </Text>
         {sessions.map(renderChoice)}
@@ -52,12 +54,12 @@ export function ResumeMenu({
     ));
   };
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="#34D399" paddingX={1} marginBottom={1}>
-      <Text color="#59E6A7" bold>◈ Resume Conversation</Text>
-      {visibleChoices.some(choice => processIds.includes(choice.id)) ? <><Text color="#38BDF8" bold>This Pace Process</Text>{renderGroups(visibleChoices.filter(choice => processIds.includes(choice.id)))}</> : null}
-      {visibleChoices.some(choice => !processIds.includes(choice.id)) ? <><Text color="#38BDF8" bold>Saved Projects</Text>{renderGroups(visibleChoices.filter(choice => !processIds.includes(choice.id)))}</> : null}
-      {choices.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {choices.length}</Text> : null}
-      <Box marginTop={1}><Text color="#64748B">↑/↓ or Tab select · Enter resume available project · Esc close</Text></Box>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.success} paddingX={1} marginBottom={1}>
+      <Text color={theme.secondary} bold>◈ Resume Conversation</Text>
+      {visibleChoices.some(choice => processIds.includes(choice.id)) ? <><Text color={theme.primary} bold>This Pace Process</Text>{renderGroups(visibleChoices.filter(choice => processIds.includes(choice.id)))}</> : null}
+      {visibleChoices.some(choice => !processIds.includes(choice.id)) ? <><Text color={theme.primary} bold>Saved Projects</Text>{renderGroups(visibleChoices.filter(choice => !processIds.includes(choice.id)))}</> : null}
+      {choices.length > 5 ? <Text color={theme.dim}>{start + 1}–{end} of {choices.length}</Text> : null}
+      <Box marginTop={1}><Text color={theme.dim}>↑/↓ or Tab select · Enter resume available project · Esc close</Text></Box>
     </Box>
   );
 }

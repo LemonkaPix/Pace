@@ -11,14 +11,14 @@ it("shows a compact two-line turn footer with the routing source", () => {
     "Selected by Vex",
     { input_tokens: 15878, cached_input_tokens: 11904, cache_write_input_tokens: 0, output_tokens: 27, reasoning_output_tokens: 11 },
     1200,
-  )).toBe("Completed · Sol · Medium · 1.2s · 15.9k input · 27 output\nCache: 11.9k hit, 0 write · Route: auto → Sol");
+  )).toBe("Completed · Sol · Medium · 1.2s · 15.9k input tokens · 27 output tokens\nCache: 11.9k hit, 0 write · Route: auto → Sol");
   expect(formatTurnFooter({ model: "gpt-6-luna", effort: "low" }, "Policy fallback after Vex abstained or was uncertain"))
     .toBe("Completed · Luna · Low\nRoute: auto (policy) → Luna");
 });
 
 it("formats observed in-turn usage with the active stage price", () => {
   expect(formatLiveUsage({ input_tokens: 1200, cached_input_tokens: 200, cache_write_input_tokens: 0, output_tokens: 30, reasoning_output_tokens: 10 }, { model: 'gpt-6-sol', effort: 'high' }))
-    .toContain('1.2k input · 30 output · ~$');
+    .toContain('1.2k input tokens · 30 output tokens · ~$');
 });
 
 it("shows reported account usage percentages and omits missing windows", () => {
@@ -94,4 +94,21 @@ it("ignores unrecognized and missing usage windows", () => {
   const result = usageWarnings({ primary: { usedPercent: 95, windowDurationMins: 60 } }, {});
   expect(result.messages).toEqual([]);
   expect(result.levels).toEqual({});
+});
+
+it("uses a plain account limits heading and shows percentages only for actual windows", () => {
+  const output = renderToString(React.createElement(UsageBar, { limits: { primary: { usedPercent: 25, windowDurationMins: 300 } }, width: 40 }), { columns: 40 });
+  expect(output).toContain("Account limits");
+  expect(output).not.toContain("Account limits · % left");
+  expect(output).toContain("75% left");
+});
+
+it("distinguishes loading, missing account windows and provider errors", () => {
+  const render = (props: React.ComponentProps<typeof UsageBar>) => renderToString(React.createElement(UsageBar, props), { columns: 40 });
+  expect(render({})).toContain("Loading usage…");
+  const missing = render({ limits: {} });
+  expect(missing).toContain("Account limits unavailable");
+  expect(missing).not.toContain("Loading");
+  expect(missing).not.toContain("% left");
+  expect(render({ error: "Usage unavailable" })).toContain("Usage unavailable");
 });

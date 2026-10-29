@@ -1,3 +1,4 @@
+import { useTheme } from "../shared/colors.js";
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import { basename } from "node:path";
@@ -20,6 +21,7 @@ const paceMicroLetters = [
 export const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
 
 export function HeaderLogo({ width }: { width: number }) {
+  const theme = useTheme();
   return (
     <Box flexDirection="column">
       {width >= 42 ? (
@@ -27,7 +29,7 @@ export function HeaderLogo({ width }: { width: number }) {
           {paceShadowLetters.map((row, rIdx) => (
             <Box key={rIdx}>
               {row.map((letter, lIdx) => (
-                <Text key={lIdx} color={letterGradients[lIdx]} bold>
+                <Text key={lIdx} color={[theme.secondary, theme.success, theme.accent, theme.primary][lIdx]} bold>
                   {letter}
                 </Text>
               ))}
@@ -39,7 +41,7 @@ export function HeaderLogo({ width }: { width: number }) {
           {paceMicroLetters.map((row, rIdx) => (
             <Box key={rIdx}>
               {row.map((letter, lIdx) => (
-                <Text key={lIdx} color={letterGradients[lIdx]} bold>
+                <Text key={lIdx} color={[theme.secondary, theme.success, theme.accent, theme.primary][lIdx]} bold>
                   {letter}
                 </Text>
               ))}
@@ -47,7 +49,7 @@ export function HeaderLogo({ width }: { width: number }) {
           ))}
         </Box>
       ) : (
-        <Text color="#59E6A7" bold>
+        <Text color={theme.secondary} bold>
           ⚡ PACE
         </Text>
       )}
@@ -65,23 +67,24 @@ export function HeaderStatus({
   sessionKind?: "normal" | "planning";
   width?: number;
 }) {
+  const theme = useTheme();
   const branch = useMemo(() => getGitBranch(project), [project]);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box gap={1} flexWrap="wrap">
-        <Text color="#A7F3D0" bold>
+        <Text color={theme.secondary} bold>
           📁 {basename(project)}
         </Text>
-        {branch ? <Text color="#93C5FD">⎇ {branch}</Text> : null}
-        {sessionKind === "planning" ? <Text color="#C084FC" bold>◈ PLANNING</Text> : null}
+        {branch ? <Text color={theme.primary}>⎇ {branch}</Text> : null}
+        {sessionKind === "planning" ? <Text color={theme.accent} bold>◈ PLANNING</Text> : null}
         <Text
           color={
             vexState === "connected"
-              ? "#34D399"
+              ? theme.success
               : vexState === "failed"
-                ? "#F87171"
-                : "#FBBF24"
+                ? theme.error
+                : theme.warning
           }
         >
           {vexState === "connected"

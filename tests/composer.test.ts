@@ -1,5 +1,6 @@
 import React from "react";
 import { PassThrough, Writable } from "node:stream";
+import { createRequire } from "node:module";
 import { render, renderToString, Text } from "ink";
 import { expect, it, vi } from "vitest";
 import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, isSteerShortcut, markdownDraftRanges, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
@@ -337,12 +338,14 @@ it("finds command tokens after text and newlines", () => {
 });
 
 it("styles completed inline Markdown while preserving editable source", () => {
-  const value = "**bold** *italic* `code` ~~old~~";
+  const value = `**bold** *italic* \`code\` ~~old~~ "double quoted" 'single quoted'`;
   expect(markdownDraftRanges(value)).toEqual([
     { start: 2, end: 6, style: "bold" },
     { start: 10, end: 16, style: "italic" },
     { start: 19, end: 23, style: "code" },
     { start: 27, end: 30, style: "strike" },
+    { start: 34, end: 47, style: "quote" },
+    { start: 50, end: 63, style: "quote" },
   ]);
   const output = renderToString(React.createElement(Composer, {
     value, onChange: () => {}, onSubmit: () => {}, history: [], disabled: false, shellMode: false,
@@ -353,7 +356,7 @@ it("styles completed inline Markdown while preserving editable source", () => {
 });
 
 it("renders Markdown emphasis in the live editor without removing its syntax", async () => {
-  const chalk = (await import("chalk")).default;
+  const chalk = (await import(createRequire(import.meta.resolve("ink")).resolve("chalk"))).default;
   const previousLevel = chalk.level;
   chalk.level = 3;
   class Output extends Writable {
@@ -515,5 +518,16 @@ it("renders without duplicate React keys when value has leading or multiple spac
     expect(errorLogs.some(msg => msg.includes("Encountered two children with the same key"))).toBe(false);
   } finally {
     console.error = originalError;
+  }
+});
+
+it("removes the old file commands from registration, completion and highlighting", async () => {
+  const { commandDescriptions, hiddenCommands } = await import("../src/components/app/commands.js");
+  for (const command of ["/diff", "/undo", "/redo"]) {
+    expect(commands).not.toContain(command);
+    expect(hiddenCommands).not.toContain(command);
+    expect(isRegisteredCommand(command)).toBe(false);
+    expect(commandDescriptions[command]).toBeUndefined();
+    expect(commandRanges(command, commands)).toEqual([]);
   }
 });
