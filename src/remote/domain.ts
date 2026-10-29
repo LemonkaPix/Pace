@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { open, realpath, stat, readdir, readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { atomicJson, newSession, PaceStore } from "../core/sessions.js";
+import { atomicJson, newSession, PaceStore, isActiveAttempt } from "../core/sessions.js";
+import { parseSession } from "../core/session-record.js";
+import { RemoteInteractionHistory, type InteractionResolution } from "./interaction-history.js";
+import { activityPage, activityText, sessionSummary, sessionTitle, transcriptRevision, workflowProjection, wireRoute } from "./session-projection.js";
 import { projectKey } from "../core/session-model.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { FileEdits } from "../core/file-edits.js";
@@ -14,7 +17,7 @@ import { readAvailableModels } from "../integrations/models.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import { validRoute } from "../shared/config.js";
 import type { Config, OperationIntent, QueuedOperation, Session as PaceSession } from "../shared/types.js";
-import { VERSION, MAX_TEXT_BYTES, parseRequest, type Method, type PendingInteraction, type RemoteEvent, type Request, type Route, type Session as RemoteSession, type Snapshot } from "./protocol.js";
+import { VERSION, MAX_TEXT_BYTES, parseRequest, type ActivityEntry, type SessionSummary, type Method, type PendingInteraction, type RemoteEvent, type Request, type Route, type Session as RemoteSession, type Snapshot } from "./protocol.js";
 
 export type RemoteBridge = {
   submit(prompt: string, session: PaceSession, intent?: OperationIntent, operation?: QueuedOperation): Promise<void>;
@@ -25,9 +28,10 @@ export type RemoteBridge = {
   changed(session: PaceSession): void;
 };
 type Interaction = { public: PendingInteraction; respond: (answer: unknown) => void; sessionId: string; timer: ReturnType<typeof setTimeout> };
-type Active = { prompt: string; status: string; activities: string[] };
+type Active = { prompt: string; status: string; activities: string[]; events: Map<string, ActivityEntry> };
 type Journal = { version: 1; entries: Record<string, { digest: string; at: string }> };
 const MAX_FILE = 1024 * 1024;
+const TURN_TEXT_CHARS = 100_000;
 const PRIVATE = /(^|\/)(?:\.env(?:\..*)?|\.git|\.ssh|\.gnupg|\.aws|\.azure|\.config|node_modules|vendor|dist|build)(\/|$)/i;
 const UUID = /^[0-9a-f-]{36}$/i;
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -40,6 +44,8 @@ export class RemoteDomain {
   private readonly roots = new Map<string, string>();
   private readonly sessions = new Map<string, PaceSession>();
   private readonly active = new Map<string, Active>();
+  private readonly history: RemoteInteractionHistory;
+  private readonly diskSessions = new Map<string, { mtimeNs: bigint; ctimeNs: bigint; ino: bigint; size: bigint; session: Promise<PaceSession | undefined> }>();
   private readonly pendingLaunch = new Set<string>();
   private readonly launches = new Set<Promise<void>>();
   private readonly launchErrors = new Map<string, string>();
@@ -55,21 +61,38 @@ export class RemoteDomain {
   private readonly observedTurn: Orchestrator["turn"];
 
   constructor(private readonly store: PaceStore, private readonly orchestrator: Orchestrator, projects: readonly string[], private readonly bridge?: RemoteBridge, private readonly onLog?: (message: string) => void) {
+    this.history = new RemoteInteractionHistory(store, message => this.log(message));
     for (const path of projects) this.roots.set(projectKey(path), resolve(path));
     this.previousTurn = orchestrator.turn.bind(orchestrator);
     this.observedTurn = (async (prompt, session, config, callback, signal, activate, intent, displayPrompt, queuedOperation) => {
       this.log(`[${session.id}] Turn started: ${prompt}`);
-      const active = { prompt, status: "Starting…", activities: [] as string[] };
+      const active = { prompt, status: "Starting…", activities: [] as string[], events: new Map<string, ActivityEntry>() };
       this.sessions.set(session.id, session); this.active.set(session.id, active); this.emit(session);
       const progress = Object.assign((event: Parameters<typeof callback>[0]) => {
+        if (this.disposed) { callback(event); return; }
         if (this.onLog) {
           try { this.log(`[${session.id}] ${JSON.stringify(event)}`); } catch { /* Non-serializable diagnostics cannot interrupt a turn. */ }
         }
         if (event.kind === "status") active.status = event.text.slice(0, 500);
-        if (event.kind === "activity") active.activities = [...active.activities.slice(-39), event.title.slice(0, 200)];
-        if (event.kind === "approval") this.addInteraction(session, { id: randomUUID(), kind: "approval", command: event.command.slice(0, 16000), ...(event.cwd ? { cwd: event.cwd.slice(0, 1000) } : {}), ...(event.reason ? { reason: event.reason.slice(0, 2000) } : {}), ...(event.network === undefined ? {} : { network: event.network }) }, event.respond);
-        if (event.kind === "question") this.addInteraction(session, { id: randomUUID(), kind: "question", questions: event.questions.map(question => ({ ...question, question: question.question.slice(0, 4000), options: question.options.slice(0, 20) })) }, event.respond);
-        if (event.kind === "questionResolved") { const id = this.interactionIds.get(event.id); if (id) this.removeInteraction(id); else this.emit(session); }
+        if (event.kind === "activity") {
+          active.activities = [...active.activities.slice(-39), event.title.slice(0, 200)];
+          const previous = active.events.get(event.id);
+          active.events.set(event.id, { id: `live:${event.id}`, at: previous?.at ?? new Date().toISOString(), kind: "activity", title: event.title, text: `${event.category}: ${event.title}${event.detail ? `\n${event.detail}` : ""}${event.outcome ? `\nOutcome: ${event.outcome}` : ""}`, status: event.completed ? event.outcome ?? "completed" : "running" });
+          if (active.events.size > 200) active.events.delete(active.events.keys().next().value!);
+        }
+        if (event.kind === "approval") {
+          const value = { id: randomUUID(), kind: "approval" as const, command: event.command.slice(0, 16000), ...(event.cwd ? { cwd: event.cwd.slice(0, 1000) } : {}), ...(event.reason ? { reason: event.reason.slice(0, 2000) } : {}), ...(event.network === undefined ? {} : { network: event.network }) };
+          const respond = event.respond;
+          this.addInteraction(session, value, respond);
+          event = { ...event, respond: (decision: Parameters<typeof respond>[0]) => { respond(decision); this.removeInteraction(value.id, decision === "accept" ? "accepted" : "declined"); } };
+        }
+        if (event.kind === "question") {
+          const value = { id: randomUUID(), kind: "question" as const, questions: event.questions.map(question => ({ ...question, question: question.question.slice(0, 4000), options: question.options.slice(0, 20) })) };
+          const respond = event.respond;
+          this.addInteraction(session, value, respond);
+          event = { ...event, respond: (answers: Parameters<typeof respond>[0]) => { respond(answers); this.removeInteraction(value.id, "answered"); } };
+        }
+        if (event.kind === "questionResolved") { const id = this.interactionIds.get(event.id); if (id) this.removeInteraction(id, "answered"); else this.emit(session); }
         try { callback(event); } finally { this.emit(session); }
       }, { ...(callback as unknown as Record<string, unknown>) });
       const controller = signal ? undefined : new AbortController();
@@ -108,8 +131,9 @@ export class RemoteDomain {
     if (this.orchestrator.turn === this.observedTurn) this.orchestrator.turn = this.previousTurn;
     for (const controller of this.controllers.values()) controller.abort();
     while (this.launches.size) await Promise.allSettled([...this.launches]);
-    for (const item of this.interactions.values()) clearTimeout(item.timer);
+    for (const id of this.interactions.keys()) this.removeInteraction(id, "expired");
     this.interactions.clear(); this.listeners.clear();
+    await this.history.close();
   }
 
   async handle(raw: Request, deviceId: string): Promise<unknown> {
@@ -117,13 +141,22 @@ export class RemoteDomain {
     const request = parseRequest(raw);
     switch (request.method) {
       case "projects.list": return [...this.roots].map(([id, path]) => ({ id, path, exists: true }));
-      case "sessions.list": return this.store.listSummaries(await this.project(request.params.projectId));
+      case "sessions.list": return this.listSessions(await this.project(request.params.projectId));
       case "sessions.create": return this.serial(request.params.projectId, async () => {
         const path = await this.project(request.params.projectId); const config = await this.store.loadConfig();
         const session = newSession(path, config.routingMode, request.params.kind, config.autoLaunchSkills);
         await this.store.saveChanges(session); this.sessions.set(session.id, session); this.emit(session); return { id: session.id };
       });
-      case "sessions.snapshot": return this.snapshot(request.params.projectId, request.params.sessionId);
+      case "sessions.snapshot": return this.snapshot(request.params.projectId, request.params.sessionId, request.params.turnOffset, request.params.latest, request.params.transcriptRevision);
+      case "sessions.activity": {
+        const session = await this.session(request.params.projectId, request.params.sessionId);
+        return activityPage(session, request.params.offset, request.params.limit, await this.activityEntries(session));
+      }
+      case "sessions.activityText": {
+        const session = await this.session(request.params.projectId, request.params.sessionId);
+        return activityText(session, request.params.activityId, request.params.offset, await this.activityEntries(session));
+      }
+      case "sessions.turnText": return this.turnText(request.params.projectId, request.params.sessionId, request.params.turnIndex, request.params.field, request.params.offset, request.params.transcriptRevision);
       case "prompts.send": return this.accept(request.params.projectId, request.params.sessionId, deviceId, request.params.key, request.params, request.params.prompt);
       case "plan.run": {
         const session = await this.session(request.params.projectId, request.params.sessionId);
@@ -175,29 +208,77 @@ export class RemoteDomain {
   private async session(projectId: string, sessionId: string) {
     if (!UUID.test(sessionId)) throw new Error("Conversation not found.");
     const path = await this.project(projectId); const current = this.bridge?.session(sessionId) ?? this.sessions.get(sessionId);
-    const value = current?.projectPath === path && (this.bridge || this.active.has(sessionId) || this.pendingLaunch.has(sessionId)) ? current : await this.store.load(path, sessionId);
+    const value = current?.projectPath === path && (this.bridge || this.active.has(sessionId) || this.pendingLaunch.has(sessionId)) ? current : await this.loadSession(path, sessionId);
     if (!value || value.projectPath !== path) throw new Error("Conversation not found in this project.");
     this.sessions.set(value.id, value); return value;
   }
-  private toDto(s: PaceSession): RemoteSession {
-    return { id: s.id, ...(s.title ? { title: s.title } : {}), ...(s.kind ? { kind: s.kind } : {}), ...(s.plan ? { plan: s.plan.slice(0, MAX_FILE) } : {}), ...(s.planArtifact ? { planArtifact: s.planArtifact } : {}), projectPath: s.projectPath, routingMode: s.routingMode, route: this.wireRoute(s.route), updatedAt: s.updatedAt,
-      turns: s.turns.map(t => ({ prompt: t.prompt.slice(0, 32000), ...(t.displayPrompt ? { displayPrompt: t.displayPrompt.slice(0, 32000) } : {}), result: t.result.slice(0, MAX_FILE), at: t.at, ...(t.fileEdits ? { fileEdits: t.fileEdits } : {}), ...(t.artifacts ? { artifacts: t.artifacts.filter(p => /^(?:artifacts|\.pace\/artifacts)\/[^/\\]+\.md$/.test(p)) } : {}), ...(t.failed ? { failed: true } : {}), ...(t.cancelled ? { cancelled: true } : {}), ...(t.route ? { route: this.wireRoute(t.route) } : {}), ...(t.durationMs ? { durationMs: t.durationMs } : {}), ...(t.usage ? { usage: { input_tokens: t.usage.input_tokens, output_tokens: t.usage.output_tokens } } : {}) })),
+  private toDto(s: PaceSession, turnOffset = 0): RemoteSession {
+    const title = sessionTitle(s, this.active.get(s.id)?.prompt);
+    return { id: s.id, ...(title ? { title } : {}), ...(s.kind ? { kind: s.kind } : {}), ...(turnOffset === 0 && s.plan ? { plan: s.plan.slice(0, MAX_FILE) } : {}), ...(s.planArtifact ? { planArtifact: s.planArtifact } : {}), projectPath: s.projectPath, routingMode: s.routingMode, route: this.wireRoute(s.route), updatedAt: s.updatedAt,
+      turns: s.turns.slice(turnOffset, turnOffset + 1).map(t => ({ prompt: "", ...(t.displayPrompt !== undefined ? { displayPrompt: "" } : {}), result: "", at: t.at, ...(t.fileEdits ? { fileEdits: t.fileEdits } : {}), ...(t.artifacts ? { artifacts: t.artifacts.filter(p => /^(?:artifacts|\.pace\/artifacts)\/[^/\\]+\.md$/.test(p)) } : {}), ...(t.failed ? { failed: true } : {}), ...(t.cancelled ? { cancelled: true } : {}), ...(t.route ? { route: this.wireRoute(t.route) } : {}), ...(t.durationMs ? { durationMs: t.durationMs } : {}), ...(t.usage ? { usage: { input_tokens: t.usage.input_tokens, output_tokens: t.usage.output_tokens } } : {}) })),
       ...(s.queuedPrompts?.length ? { queuedPrompts: s.queuedPrompts.map(item => typeof item === "string" ? item : item.text), queuedOperations: s.queuedPrompts.map(item => operation(item, s.id, s.activeTask?.id)) } : {}),
-      ...(s.sideAnswers?.length ? { sideAnswers: s.sideAnswers.map(item => ({ ...item, question: item.question.slice(0, 32000), result: item.result?.slice(0, MAX_FILE), route: this.wireRoute(item.route) })) } : {}),
+      ...(turnOffset === 0 && s.sideAnswers?.length ? { sideAnswers: s.sideAnswers.slice(-5).map(item => ({ id: item.id, taskId: item.taskId, attemptId: item.attemptId, snapshotAt: item.snapshotAt, error: item.error?.slice(0, 2000), adopted: item.adopted, question: item.question.slice(0, 2000), result: item.result?.slice(0, 2000), route: this.wireRoute(item.route) })) } : {}),
       ...(s.tasks ? { tasks: s.tasks.map(t => ({ ...t })) } : {}), ...(s.threadId ? { threadId: s.threadId } : {}), ...(s.threadId && s.contextByThread?.[s.threadId] ? { contextByThread: { [s.threadId]: s.contextByThread[s.threadId]! } } : {}) };
   }
-  private wireRoute(route: PaceSession["route"]): RemoteSession["route"] {
-    const valid = ["minimal", "low", "medium", "high", "xhigh", "ultra", "persistent"];
-    return { ...(route.model ? { model: route.model } : {}), ...(route.effort && valid.includes(route.effort) ? { effort: route.effort as RemoteSession["route"]["effort"] } : {}) };
+  private wireRoute(route: PaceSession["route"]): RemoteSession["route"] { return wireRoute(route); }
+  private liveActivities(sessionId: string) { return [...(this.active.get(sessionId)?.events.values() ?? [])]; }
+  private async activityEntries(session: PaceSession) { return [...await this.history.read(session), ...this.liveActivities(session.id)]; }
+  private async loadSession(path: string, sessionId: string) {
+    const file = resolve(this.store.sessionDir(path), `${sessionId}.json`);
+    const info = await stat(file, { bigint: true }).catch(error => missing(error) ? undefined : Promise.reject(error));
+    if (!info) return undefined;
+    const cached = this.diskSessions.get(sessionId);
+    if (cached?.mtimeNs === info.mtimeNs && cached.ctimeNs === info.ctimeNs && cached.ino === info.ino && cached.size === info.size) return cached.session;
+    const session = this.store.load(path, sessionId);
+    this.diskSessions.set(sessionId, { mtimeNs: info.mtimeNs, ctimeNs: info.ctimeNs, ino: info.ino, size: info.size, session });
+    if (this.diskSessions.size > 16) this.diskSessions.delete(this.diskSessions.keys().next().value!);
+    return session;
   }
-  private async snapshot(projectId: string, sessionId: string): Promise<Snapshot> {
+
+  private async listSessions(path: string): Promise<SessionSummary[]> {
+    const files = (await readdir(this.store.sessionDir(path)).catch(error => missing(error) ? [] : Promise.reject(error))).filter(name => /^[0-9a-f-]{36}\.json$/.test(name));
+    const summaries: SessionSummary[] = [];
+    // Bound disk/JSON work; unlike store.list this read does not recover or mutate historical sessions.
+    for (let offset = 0; offset < files.length; offset += 4) {
+      const page = await Promise.all(files.slice(offset, offset + 4).map(async file => {
+        try {
+          const persisted = parseSession(JSON.parse(await readFile(resolve(this.store.sessionDir(path), file), "utf8")), path);
+          if (!persisted) return undefined;
+          const current = this.bridge?.session(persisted.id) ?? ((this.active.has(persisted.id) || this.pendingLaunch.has(persisted.id)) ? this.sessions.get(persisted.id) : undefined);
+          const session = current?.projectPath === path ? current : persisted;
+          const active = this.active.get(session.id);
+          const waiting = [...this.interactions.values()].some(item => item.sessionId === session.id);
+          const summary = sessionSummary(session, { running: !!active || this.pendingLaunch.has(session.id) || this.bridge?.busy(session.id) || session.attempts?.some(item => isActiveAttempt(session, item.id)), waiting, error: this.launchErrors.get(session.id), prompt: active?.prompt });
+          if (active) summary.latestActivity = active.activities.at(-1) ?? active.status;
+          return summary;
+        } catch (error) { this.log(`Session summary unavailable: ${String(error)}`); return undefined; }
+      }));
+      summaries.push(...page.filter((item): item is SessionSummary => !!item));
+    }
+    return summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+  private async snapshot(projectId: string, sessionId: string, turnOffset: number, latest = false, expectedRevision?: string): Promise<Snapshot> {
     const session = await this.session(projectId, sessionId); const active = this.active.get(sessionId);
-    return { cursor: `${this.epoch}:${this.revision}`, session: this.toDto(session), ...(this.launchErrors.has(sessionId) ? { operationError: this.launchErrors.get(sessionId) } : {}), ...(active ? { active: { prompt: active.prompt, status: active.status, activities: [...active.activities] } } : {}), interactions: [...this.interactions.values()].filter(item => item.sessionId === sessionId).map(item => item.public), approvalMode: (await this.store.loadConfig()).approvalMode ?? "request-approval" };
+    const revision = transcriptRevision(session);
+    if (expectedRevision && expectedRevision !== revision) throw new Error("Transcript changed. Refresh this session.");
+    const offset = latest ? Math.max(0, session.turns.length - 1) : turnOffset;
+    const workflow = workflowProjection(session);
+    return { cursor: `${this.epoch}:${this.revision}`, transcriptRevision: revision, session: this.toDto(session, offset), turnOffset: offset, totalTurns: session.turns.length, ...(offset === 0 || latest ? { activity: activityPage(session, undefined, 40, await this.activityEntries(session), 200 * 1024), ...(workflow ? { workflow } : {}) } : {}), ...(this.launchErrors.has(sessionId) ? { operationError: this.launchErrors.get(sessionId) } : {}), ...(active ? { active: { prompt: active.prompt.slice(0, 32000), status: active.status, activities: [...active.activities] } } : {}), interactions: [...this.interactions.values()].filter(item => item.sessionId === sessionId).map(item => item.public), approvalMode: (await this.store.loadConfig()).approvalMode ?? "request-approval" };
+  }
+  private async turnText(projectId: string, sessionId: string, turnIndex: number, field: "prompt" | "displayPrompt" | "result", offset: number, expectedRevision?: string) {
+    const session = await this.session(projectId, sessionId); const turn = session.turns[turnIndex];
+    const revision = transcriptRevision(session);
+    if (expectedRevision && expectedRevision !== revision) throw new Error("Transcript changed. Refresh this session.");
+    if (!turn) throw new Error("Conversation turn not found.");
+    const value = turn[field]; if (value === undefined) throw new Error("Conversation turn text not found.");
+    const text = value.slice(offset, offset + TURN_TEXT_CHARS); const nextOffset = offset + text.length;
+    return { transcriptRevision: revision, field, offset, nextOffset: nextOffset < value.length ? nextOffset : null, totalChars: value.length, text };
   }
   private addInteraction(session: PaceSession, value: PendingInteraction, respond: (answer: never) => void) {
-    const timer = setTimeout(() => { this.interactions.delete(value.id); this.emit(session); }, 10 * 60 * 1000);
+    const timer = setTimeout(() => this.removeInteraction(value.id, "expired"), 10 * 60 * 1000);
     if (value.kind === "question") this.interactionIds.set(value.questions?.[0]?.id ?? "", value.id);
     this.interactions.set(value.id, { public: value, respond: respond as (answer: unknown) => void, sessionId: session.id, timer });
+    this.history.requested(session, value);
   }
   private answer(sessionId: string, id: string, decision?: "accept" | "decline", answers?: Record<string, { answers: string[] }>) {
     const item = this.interactions.get(id); if (!item || item.sessionId !== sessionId) throw new Error("Approval or question expired. Refresh the conversation.");
@@ -211,7 +292,7 @@ export class RemoteDomain {
       }
       item.respond(answers);
     }
-    clearTimeout(item.timer); this.interactions.delete(id); this.emit(this.sessions.get(sessionId)); return { accepted: true };
+    this.removeInteraction(id, item.public.kind === "approval" ? decision === "accept" ? "accepted" : "declined" : "answered"); return { accepted: true };
   }
   private async routing(projectId: string, sessionId: string, mode: "auto" | "manual", route: Route) {
     const session = await this.session(projectId, sessionId); if (this.active.has(sessionId) || this.bridge?.busy(sessionId)) throw new Error("Wait for active turn before changing routing.");
@@ -342,6 +423,14 @@ export class RemoteDomain {
     catch (error) { if (!missing(error)) throw error; return this.journal = { version: 1, entries: {} }; }
   }
   private async serial<T>(key: string, fn: () => Promise<T>): Promise<T> { const previous = this.chains.get(key) ?? Promise.resolve(); let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; }); this.chains.set(key, previous.then(() => barrier)); await previous.catch(() => {}); try { return await fn(); } finally { release(); } }
-  private removeInteraction(id: string) { const value = this.interactions.get(id); if (value) { clearTimeout(value.timer); this.interactions.delete(id); this.emit(this.sessions.get(value.sessionId)); } }
+  private removeInteraction(id: string, status: InteractionResolution = "expired") {
+    const value = this.interactions.get(id);
+    if (!value) return;
+    clearTimeout(value.timer); this.interactions.delete(id);
+    if (value.public.kind === "question") for (const question of value.public.questions ?? []) this.interactionIds.delete(question.id);
+    const session = this.sessions.get(value.sessionId);
+    if (session) this.history.resolved(session, value.public, status);
+    this.emit(session);
+  }
   private emit(session?: PaceSession) { if (!session) return; const event = { v: VERSION, type: "changed", cursor: `${this.epoch}:${++this.revision}`, projectId: projectKey(session.projectPath), sessionId: session.id } satisfies RemoteEvent; for (const listener of this.listeners) { try { listener(event); } catch { /* Stale mobile sockets cannot affect Pace turns. */ } } }
 }

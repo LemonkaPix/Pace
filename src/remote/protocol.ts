@@ -13,7 +13,10 @@ const methods = {
   'projects.list': z.object({}).strict(),
   'sessions.list': z.object({ projectId: target.projectId }).strict(),
   'sessions.create': z.object({ projectId: target.projectId, kind: z.enum(['normal', 'planning']).default('normal') }).strict(),
-  'sessions.snapshot': z.object({ ...target }).strict(),
+  'sessions.snapshot': z.object({ ...target, turnOffset: z.number().int().min(0).default(0), latest: z.boolean().optional(), transcriptRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict(),
+  'sessions.activity': z.object({ ...target, offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(100).default(40) }).strict(),
+  'sessions.activityText': z.object({ ...target, activityId: z.string().min(1).max(300), offset: z.number().int().min(0).default(0) }).strict(),
+  'sessions.turnText': z.object({ ...target, turnIndex: z.number().int().min(0), field: z.enum(['prompt', 'displayPrompt', 'result']), offset: z.number().int().min(0).default(0), transcriptRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict(),
   'prompts.send': z.object({ ...target, prompt: text, key: id }).strict(),
   'queue.remove': z.object({ ...target, index: z.number().int().min(0).max(99) }).strict(),
   'turn.cancel': z.object({ ...target }).strict(),
@@ -60,7 +63,13 @@ export type Session = {
   sideAnswers?: { id: string; taskId?: string; attemptId: string; question: string; snapshotAt: string; route: Route; result?: string; error?: string; adopted?: boolean }[];
   contextByThread?: Record<string, { tokens: number; windowTokens: number; model?: string }>; threadId?: string;
 };
-export type Snapshot = { cursor: string; session: Session; operationError?: string; active?: { prompt: string; status: string; activities: string[] }; interactions: PendingInteraction[]; approvalMode: z.infer<typeof approvalModeSchema> };
+export type SessionSummary = Pick<Session, 'id' | 'title' | 'kind' | 'projectPath' | 'routingMode' | 'route' | 'updatedAt'> & { totalTurns: number; state: 'running' | 'waiting' | 'idle' | 'failed'; latestActivity?: string };
+export type ActivityEntry = { id: string; kind: 'attempt' | 'activity' | 'tasks' | 'answer' | 'artifacts' | 'decision' | 'steering' | 'side-answer' | 'workflow'; at: string; title: string; text?: string; status?: string; role?: string; attemptId?: string; paths?: string[]; route?: Route; truncated?: boolean };
+export type ActivityPage = { items: ActivityEntry[]; offset: number; nextOffset: number | null; total: number };
+export type ActivityTextPage = { activityId: string; offset: number; nextOffset: number | null; totalChars: number; text: string };
+export type Workflow = { generation: number; shape: string; stage: string; status?: string };
+export type Snapshot = { cursor: string; transcriptRevision: string; activity?: ActivityPage; workflow?: Workflow; session: Session; turnOffset: number; totalTurns: number; operationError?: string; active?: { prompt: string; status: string; activities: string[] }; interactions: PendingInteraction[]; approvalMode: z.infer<typeof approvalModeSchema> };
+export type TurnTextPage = { transcriptRevision: string; field: 'prompt' | 'displayPrompt' | 'result'; offset: number; nextOffset: number | null; totalChars: number; text: string };
 export type Project = { id: string; path: string; exists: boolean };
 export type FileChange = { path: string; undone: boolean };
 export type TextPage = { path: string; text: string; offset: number; nextOffset: number | null; totalLines: number };

@@ -99,6 +99,31 @@ it("retains a failed queued operation and exposes preparation failure in the sna
   expect((await env.store.load(env.root, env.session.id))?.queuedPrompts).toEqual([queued]); expect(env.calls).toHaveLength(0);
 });
 
+it("pages the complete transcript without dropping or shortening turns", async () => {
+  const env = await fixture(); const domain = env.create();
+  const original = Array.from({ length: 25 }, (_, index) => ({ prompt: `prompt-${index}:` + "p".repeat(120_000), ...(index % 2 ? { displayPrompt: `display-${index}:` + "d".repeat(110_000) } : {}), result: `result-${index}:` + "x".repeat(180_000), at: `turn-${index}` }));
+  env.session = await env.store.update(env.session, session => { session.turns = original; });
+  const pages = await Promise.all(original.map((_, turnOffset) => env.request(domain, "sessions.snapshot", { turnOffset }) as Promise<Snapshot>));
+  expect(pages.map(page => page.session.turns[0]?.at)).toEqual(original.map(turn => turn.at));
+  expect(pages.every(page => page.totalTurns === original.length)).toBe(true);
+  expect(pages.every(page => Buffer.byteLength(JSON.stringify(page)) < 1024 * 1024)).toBe(true);
+  const readText = async (turnIndex: number, field: "prompt" | "displayPrompt" | "result") => {
+    let offset = 0; let text = "";
+    do {
+      const page = await env.request(domain, "sessions.turnText", { turnIndex, field, offset }) as { text: string; nextOffset: number | null };
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(1024 * 1024);
+      text += page.text;
+      if (page.nextOffset === null) return text;
+      offset = page.nextOffset;
+    } while (true);
+  };
+  for (let index = 0; index < original.length; index++) {
+    expect(await readText(index, "prompt")).toBe(original[index]!.prompt);
+    if (original[index]!.displayPrompt !== undefined) expect(await readText(index, "displayPrompt")).toBe(original[index]!.displayPrompt);
+    expect(await readText(index, "result")).toBe(original[index]!.result);
+  }
+});
+
 it("UI bridge receives the same fresh execution service and queue metadata", async () => {
   const env = await fixture(); let busy = true;
   const submitted: { prompt: string; session: Session; item?: QueuedOperation }[] = [];
