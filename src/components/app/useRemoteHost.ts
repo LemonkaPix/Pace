@@ -71,7 +71,8 @@ export function useRemoteHost({ state, promptQueue, rememberSession, add }: {
         state.remoteHost.current = host;
         setRemotePairing(host.pairing); setRemoteStatus(`Listening on ${host.address}`);
       } catch (error) {
-        await domain?.close();
+        try { await domain?.close(); }
+        catch (cleanupError) { log({ kind: 'error', message: `Remote cleanup failed: ${String(cleanupError)}` }); }
         if (!mounted.current) return;
         setRemoteStatus('Stopped');
         if (error instanceof RemoteLockError) setRemoteConflict(error);

@@ -18,6 +18,7 @@ import { RemoteDomain } from "../remote/domain.js";
 import { startRemoteHost } from "../remote/server.js";
 import { lanAddresses, remoteLock } from "../remote/security.js";
 import qrcode from "qrcode-terminal";
+import { pairingLink } from "../remote/pairing-link.js";
 
 export function runTerminalClear(): void {
   try {
@@ -133,8 +134,8 @@ else if (args[0] === "doctor") {
       const domain = new RemoteDomain(store, orchestrator, [...new Set(roots)]);
       const host = await startRemoteHost({ baseDir: store.baseDir, address: addresses[0]!, domain });
       console.log(`Remote host listening on ${host.address}. Scan one-time pairing code within 2 minutes:`);
-      qrcode.generate(JSON.stringify(host.pairing), { small: true });
-      const shutdown = () => { void host.close().then(() => process.exit(0)); };
+      qrcode.generate(pairingLink(host.pairing), { small: true });
+      const shutdown = () => { void host.close().then(() => process.exit(0), error => { console.error(`Remote shutdown failed: ${String(error)}`); process.exit(1); }); };
       process.once("SIGINT", shutdown); process.once("SIGTERM", shutdown);
       await new Promise<void>(resolve => { process.once("beforeExit", resolve); });
     }

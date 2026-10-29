@@ -143,11 +143,13 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
           bonjour?.unpublishAll(); bonjour?.destroy();
           for (const ws of clients.keys()) ws.terminate();
           sockets?.close();
-          await options.domain.close();
-          await new Promise<void>(resolve => server!.close(() => resolve()));
-          await release();
-          log('host', 'Remote host stopped.');
-          options.onClose?.();
+          try { await options.domain.close(); }
+          finally {
+            await new Promise<void>(resolve => server!.close(() => resolve()));
+            await release();
+            log('host', 'Remote host stopped.');
+            options.onClose?.();
+          }
         })();
       },
     };

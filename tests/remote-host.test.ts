@@ -128,3 +128,17 @@ it('pairs over TLS, logs connection/request/error/disconnect events, renews code
   expect(onClose).toHaveBeenCalledOnce(); expect(domain.close).toHaveBeenCalledOnce();
   const release = await remoteLock(root); await release();
 });
+
+it('releases the listener and host lock even when interaction history cannot flush at shutdown', async () => {
+  const root = await directory();
+  const domain = { subscribe: () => () => {}, resumeQueues: async () => {}, close: vi.fn(async () => { throw new Error('Remote interaction history unavailable'); }) } as unknown as RemoteDomain;
+  const onClose = vi.fn();
+  const host = await startRemoteHost({ baseDir: root, address: '127.0.0.1', port: 0, allowTestAddress: true, advertise: false, domain, onClose });
+  await expect(host.close()).rejects.toThrow('Remote interaction history unavailable');
+  expect(onClose).toHaveBeenCalledOnce();
+  const release = await remoteLock(root); await release();
+  await expect(new Promise((resolve, reject) => {
+    const req = request(host.address, { rejectUnauthorized: false, agent: false }, response => { response.resume(); resolve(response.statusCode); });
+    req.on('error', reject); req.end();
+  })).rejects.toThrow('ECONNREFUSED');
+});
