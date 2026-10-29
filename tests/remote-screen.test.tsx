@@ -2,6 +2,7 @@ import React from "react";
 import { PassThrough, Writable } from "node:stream";
 import { render } from "ink";
 import qrcode from 'qrcode-terminal';
+import { pairingLink } from '../src/remote/pairing-link.js';
 import { afterEach, expect, it, vi } from "vitest";
 import App from "../src/components/App.js";
 import { PaceStore } from "../src/core/sessions.js";
@@ -89,9 +90,9 @@ it('opens /remote as a dedicated QR screen and retains background logs across cl
   const generate = vi.spyOn(qrcode, 'generate');
   const remote = remoteHost(); const ui = await mount();
   await ui.submit('/remote');
-  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with Pace Remote'));
+  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with your phone camera'));
   expect(ui.stdout.writes.join('')).toMatch(/[▀▄█]/);
-  expect(generate).toHaveBeenCalledWith(JSON.stringify(remote.host.pairing), { small: true }, expect.any(Function));
+  expect(generate).toHaveBeenCalledWith(pairingLink(remote.host.pairing), { small: true }, expect.any(Function));
   expect(remote.start).toHaveBeenCalledOnce();
   remote.log({ kind: 'paired', message: 'Device paired: Phone' });
   await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Device paired: Phone'));
@@ -107,7 +108,7 @@ it('opens /remote as a dedicated QR screen and retains background logs across cl
   expect(remote.start).toHaveBeenCalledOnce(); expect(remote.host.close).not.toHaveBeenCalled();
   ui.stdin.write('p'); await ui.instance.waitUntilRenderFlush();
   expect(remote.host.newPairing).toHaveBeenCalledOnce();
-  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with Pace Remote'));
+  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with your phone camera'));
   ui.stdout.writes.length = 0;
   ui.stdin.write('\x1b'); await ui.instance.waitUntilRenderFlush();
   await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Ask Pace or type /'));
@@ -137,7 +138,7 @@ it('allows closing during startup and honors /remote stop after startup complete
 it('keeps the screen usable after a stop failure and lets the user retry', async () => {
   const remote = remoteHost();
   const ui = await mount(); await ui.submit('/remote');
-  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with Pace Remote'));
+  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with your phone camera'));
   remote.host.close.mockRejectedValueOnce(new Error('Close failed'));
   ui.stdin.write('s'); await ui.instance.waitUntilRenderFlush();
   await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Stop failed'));
@@ -164,7 +165,7 @@ it('defaults to keeping an existing session and requires explicit selection befo
   ui.stdin.write('\r'); await ui.instance.waitUntilRenderFlush();
   await vi.waitFor(() => expect(takeover).toHaveBeenCalledWith(expect.any(String), locked));
   await vi.waitFor(() => expect(remote.start).toHaveBeenCalledTimes(3));
-  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with Pace Remote'));
+  await vi.waitFor(() => expect(ui.stdout.writes.join('')).toContain('Scan with your phone camera'));
 });
 
 it('shows takeover and startup failures in the screen and allows retry', async () => {

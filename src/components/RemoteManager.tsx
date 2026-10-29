@@ -4,6 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 import stringWidth from 'string-width';
 import qrcode from 'qrcode-terminal';
 import type { Pairing } from '../remote/protocol.js';
+import { pairingLink } from '../remote/pairing-link.js';
 import type { RemoteLockError } from '../remote/security.js';
 
 export function wrapRemoteLogs(logs: string[], width: number): string[] {
@@ -46,7 +47,7 @@ export function RemoteManager({ width, height, status, logs, pairing, conflict, 
   const start = Math.min(top ?? lastTop, lastTop);
   const code = useMemo(() => {
     let result = '';
-    if (pairing) qrcode.generate(JSON.stringify(pairing), { small: true }, value => { result = value.trimEnd(); });
+    if (pairing) qrcode.generate(pairingLink(pairing), { small: true }, value => { result = value.trimEnd(); });
     return result;
   }, [pairing?.token]);
   const codeRows = code.split('\n');
@@ -85,7 +86,7 @@ export function RemoteManager({ width, height, status, logs, pairing, conflict, 
       {error ? <Text color="red">{error}</Text> : null}
       {pairing && !showLogs ? expired ? <Text color="#FBBF24">Pairing code expired. Press P for a new QR code.</Text>
         : codeWidth <= contentWidth && codeRows.length + 1 <= height - 4 ? <>
-          <Text wrap="truncate-end">Scan with Pace Remote · one-time code expires in {Math.max(1, Math.ceil((pairing.expiresAt - now) / 1000))}s</Text>
+          <Text wrap="truncate-end">Scan with your phone camera · opens Pace Remote · expires in {Math.max(1, Math.ceil((pairing.expiresAt - now) / 1000))}s</Text>
           <Text color="white" backgroundColor="black">{code}</Text>
         </> : <Text>Resize terminal to at least {codeWidth + 2} columns × {codeRows.length + 5} rows to show the complete QR code. P renews it.</Text>
         : <>
