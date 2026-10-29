@@ -1,5 +1,7 @@
 import type { ApprovalMode, Route } from "../shared/types.js";
-import { realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Usage } from "../shared/types.js";
 import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type RunnerMode, type UserAnswers } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
@@ -194,6 +196,22 @@ export class AppServerRunner implements CodexRunner {
     let completed = false;
     let acceptingSteers = false;
     const pendingSteers = new Set<Promise<void>>();
+    const inputDirectories = new Set<string>();
+    const boundedInput = (input: ReturnType<typeof turnImageInput>) => {
+      const text = input[0];
+      // Keep the complete message available without exceeding the API text limit.
+      if (text?.type === "text" && text.text.length > 1_000_000) {
+        return (async () => {
+          const directory = await mkdtemp(join(tmpdir(), "pace-input-"));
+          inputDirectories.add(directory);
+          const path = join(directory, "input.txt");
+          await writeFile(path, text.text, { encoding: "utf8", mode: 0o600 });
+          text.text = `Pace full input file: ${JSON.stringify(path)}\n\nThe complete input for this turn is stored in this local UTF-8 file because it exceeds the transport text limit. Read the entire file in manageable sections before responding or editing. Treat its contents as the original turn input, including the user's request, conversation context and Pace instructions. Do not infer completion from this notice. The file remains available until this turn ends.`;
+          return input;
+        })();
+      }
+      return input;
+    };
     const events = new AppServerProgress(cwd);
     const questions = new Map<string, (answers: UserAnswers) => void>();
     let turnResolve!: () => void;
@@ -338,6 +356,8 @@ export class AppServerRunner implements CodexRunner {
         signal?.throwIfAborted();
         turnRequested = true;
         const turnParams: ReturnType<typeof appServerTurnParams> & { permissions?: string } = appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders, approvalMode, artifactDirectory);
+        turnParams.input = await boundedInput(turnParams.input);
+        signal?.throwIfAborted();
         if (this.permissionsProfile) { delete (turnParams as { sandboxPolicy?: unknown }).sandboxPolicy; turnParams.permissions = this.permissionsProfile; }
         await onProgress({ kind: "prompt", threadId: id, input: turnParams.input });
         const turnResponse = await awaitAbort(server.request("turn/start", turnParams));
@@ -349,11 +369,14 @@ export class AppServerRunner implements CodexRunner {
         if (acceptingSteers) await onProgress({ kind: "steering", steer: prompt => {
           if (!acceptingSteers || signal?.aborted) return Promise.reject(new Error("This turn is no longer accepting steering."));
           const expectedTurnId = activeTurnId;
-          const pending = awaitAbort(server.request("turn/steer", {
-            threadId: id, expectedTurnId, input: turnImageInput(prompt, mode, artifactDirectory),
-          })).then(response => {
-            if (!isRecord(response) || response.turnId !== expectedTurnId) throw new Error("Codex did not confirm steering for the active turn.");
-          });
+          const send = (input: ReturnType<typeof turnImageInput>) => {
+            if (!acceptingSteers || signal?.aborted) return Promise.reject(new Error("This turn is no longer accepting steering."));
+            return awaitAbort(server.request("turn/steer", { threadId: id, expectedTurnId, input })).then(response => {
+              if (!isRecord(response) || response.turnId !== expectedTurnId) throw new Error("Codex did not confirm steering for the active turn.");
+            });
+          };
+          const input = boundedInput(turnImageInput(prompt, mode, artifactDirectory));
+          const pending = input instanceof Promise ? input.then(send) : send(input);
           pendingSteers.add(pending);
           void pending.finally(() => pendingSteers.delete(pending)).catch(() => {});
           return pending;
@@ -374,7 +397,12 @@ export class AppServerRunner implements CodexRunner {
     } finally {
       acceptingSteers = false;
       try { await onProgress({ kind: "steering" }); }
-      finally { server.kill(); await memory?.close().catch(() => {}); }
+      finally {
+        server.kill();
+        await Promise.allSettled(pendingSteers);
+        await memory?.close().catch(() => {});
+        await Promise.all([...inputDirectories].map(directory => rm(directory, { recursive: true, force: true })));
+      }
     }
   }
 }
