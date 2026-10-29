@@ -53,9 +53,11 @@ export function manualSelection(source: Session, selection: Route | ManualWorkfl
 }
 /** Persist routing intent against the latest revision, rather than a mutable UI snapshot. */
 export async function saveRoutingSelection(
-  store: PaceStore, source: Pick<Session, "id" | "projectPath">, selection: Route | ManualWorkflow | "auto",
+  store: PaceStore, source: Session, selection: Route | ManualWorkflow | "auto",
   activate: boolean | (() => boolean) = true,
 ): Promise<Session> {
+  // Startup conversations stay in memory until their first persisted action.
+  if (!source.revision) await store.saveChanges(source, activate);
   return store.update(source, latest => {
     if (latest.attempts?.some(attempt => attempt.status === "running" &&
       (attempt.role === "main" || attempt.role === "scout" || attempt.role === "verifier" ||

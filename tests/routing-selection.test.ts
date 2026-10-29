@@ -44,6 +44,17 @@ it("selects a workflow before the first task and can delegate it back to auto fr
   expect(await store.load(session.projectPath, session.id)).toEqual(automatic);
 });
 
+it("persists manual routing for a fresh conversation before any prompt has saved it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pace-fresh-routing-")); roots.push(root);
+  const store = new PaceStore(root);
+  const session = newSession("/example/project", "auto");
+  expect(await store.load(session.projectPath, session.id)).toBeUndefined();
+  const selected = await saveRoutingSelection(store, session, scout, false);
+  expect(selected).toMatchObject({ routingMode: "manual", manualWorkflow: scout, turns: [] });
+  expect(selected.activeTask).toBeUndefined();
+  expect(await store.load(session.projectPath, session.id)).toEqual(selected);
+});
+
 it("changes only the route on the latest workflow and auto mode preserves its progress and ledger", async () => {
   const { store, session } = await setup();
   const latest = await store.update(session, current => {
