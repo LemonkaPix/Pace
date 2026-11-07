@@ -80,6 +80,11 @@ export class RemoteDomain {
           active.events.set(event.id, { id: `live:${event.id}`, at: previous?.at ?? new Date().toISOString(), kind: "activity", title: event.title, text: `${event.category}: ${event.title}${event.detail ? `\n${event.detail}` : ""}${event.outcome ? `\nOutcome: ${event.outcome}` : ""}`, status: event.completed ? event.outcome ?? "completed" : "running" });
           if (active.events.size > 200) active.events.delete(active.events.keys().next().value!);
         }
+        if (event.kind === "message") {
+          const previous = active.events.get(event.id);
+          active.events.set(event.id, { id: `live:${event.id}`, at: previous?.at ?? new Date().toISOString(), kind: "answer", title: "Agent response", text: event.text.slice(0, 32000), status: event.completed ? "completed" : "running" });
+          if (active.events.size > 200) active.events.delete(active.events.keys().next().value!);
+        }
         if (event.kind === "approval") {
           const value = { id: randomUUID(), kind: "approval" as const, command: event.command.slice(0, 16000), ...(event.cwd ? { cwd: event.cwd.slice(0, 1000) } : {}), ...(event.reason ? { reason: event.reason.slice(0, 2000) } : {}), ...(event.network === undefined ? {} : { network: event.network }) };
           const respond = event.respond;

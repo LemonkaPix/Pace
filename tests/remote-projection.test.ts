@@ -23,6 +23,14 @@ function session(): Session {
   return value;
 }
 
+it("shows a cancelled turn as idle rather than failed", () => {
+  const value = session();
+  value.turns[0]!.failed = true;
+  value.turns[0]!.cancelled = true;
+  value.attempts = [attempt({ status: "cancelled" })];
+  expect(sessionSummary(value)).toMatchObject({ state: "idle", latestActivity: "Cancelled" });
+});
+
 it("keeps transcript hashes stable across activity and plan changes, but catches same-length text and metadata edits", () => {
   const value = session(); const initial = transcriptRevision(value);
   value.attempts = [attempt({ observations: [{ kind: "activity", text: "command: npm test" }] })];
@@ -114,14 +122,14 @@ it("never deduplicates approval journal entries against tool text or missing obs
 
 it("computes lightweight session state with waiting interactions taking precedence over running", () => {
   const value = session(); value.attempts = [attempt({ result: "huge".repeat(100_000) })];
-  expect(sessionSummary(value).state).toBe("idle");
+  expect(sessionSummary(value).state).toBe("completed");
   expect(sessionSummary(value, { running: true }).state).toBe("running");
   expect(sessionSummary(value, { running: true, waiting: true }).state).toBe("waiting");
   value.attempts[0]!.status = "awaiting_user"; expect(sessionSummary(value).state).toBe("waiting");
   value.attempts[0]!.status = "failed"; expect(sessionSummary(value).state).toBe("failed");
   value.attempts[0]!.status = "awaiting_user";
   value.attempts.push(attempt({ id: "attempt-2", status: "completed" }));
-  expect(sessionSummary(value).state).toBe("idle");
+  expect(sessionSummary(value).state).toBe("completed");
   expect(Buffer.byteLength(JSON.stringify(sessionSummary(value)))).toBeLessThan(1024);
   expect(sessionSummary(value)).not.toHaveProperty("turns");
 });

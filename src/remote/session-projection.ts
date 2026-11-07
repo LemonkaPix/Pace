@@ -84,8 +84,8 @@ function activitySources(session: Session, live: ActivityEntry[] = []): Activity
   const workflow = workflowProjection(session);
   if (workflow) add(`workflow:${workflow.generation}:${workflow.stage}`, session.updatedAt, () => ({ kind: "workflow", title: `${workflow.shape} · ${workflow.stage}`, status: workflow.status }));
   if (live.length) {
-    const persistedText = new Set((session.attempts ?? []).flatMap(attempt => attempt.observations.filter(item => item.kind === "activity").map(item => item.text)));
-    for (const entry of live) if (entry.kind !== "activity" || !persistedText.has(entry.text)) sources.push({ id: entry.id, at: entry.at, read: () => entry });
+    const persistedText = new Set((session.attempts ?? []).flatMap(attempt => attempt.observations.filter(item => item.kind === "activity" || item.kind === "answer").map(item => item.text)));
+    for (const entry of live) if (entry.kind !== "activity" && entry.kind !== "answer" || !persistedText.has(entry.text)) sources.push({ id: entry.id, at: entry.at, read: () => entry });
   }
   return sources.sort((a, b) => a.at.localeCompare(b.at));
 }
@@ -127,10 +127,10 @@ export function sessionSummary(session: Session, live: { running?: boolean; wait
   const attempt = session.attempts?.at(-1);
   const lastTurn = session.turns.at(-1);
   const waiting = live.waiting || session.deferredTurn || (attempt && ["awaiting_user", "running", "pending"].includes(attempt.status));
-  const failed = live.error || lastTurn?.failed || (attempt?.status === "failed" && (!lastTurn || attempt.startedAt >= lastTurn.at));
+  const failed = live.error || (lastTurn?.failed && !lastTurn.cancelled) || (attempt?.status === "failed" && (!lastTurn || attempt.startedAt >= lastTurn.at));
   const latest = session.attempts?.at(-1)?.observations.at(-1);
-  const latestActivity = live.error ?? latest?.text?.slice(0, 200) ?? (attempt ? `${attempt.role} · ${attempt.stage} · ${attempt.status}` : undefined);
+  const latestActivity = live.error ?? (live.running ? latest?.text?.slice(0, 200) : lastTurn?.cancelled ? "Cancelled" : lastTurn?.result?.slice(0, 200));
   const title = sessionTitle(session, live.prompt);
   return { id: session.id, ...(title ? { title } : {}), ...(session.kind ? { kind: session.kind } : {}), projectPath: session.projectPath, routingMode: session.routingMode, route: wireRoute(session.route), updatedAt: session.updatedAt, totalTurns: session.turns.length,
-    state: live.waiting ? "waiting" : live.running ? "running" : waiting ? "waiting" : failed ? "failed" : "idle", ...(latestActivity ? { latestActivity: latestActivity.slice(0, 200) } : {}) };
+    state: live.waiting ? "waiting" : live.running ? "running" : waiting ? "waiting" : failed ? "failed" : lastTurn && !lastTurn.cancelled ? "completed" : "idle", ...(latestActivity ? { latestActivity: latestActivity.slice(0, 200) } : {}) };
 }
