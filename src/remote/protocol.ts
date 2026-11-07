@@ -38,6 +38,7 @@ const methods = {
   'diff.change': z.object({ ...target, editId: id, path: z.string().min(1).max(1024), direction: z.enum(['undo', 'redo']) }).strict(),
   'devices.list': z.object({}).strict(),
   'devices.revoke': z.object({ deviceId: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  'notifications.register': z.object({ token: z.string().regex(/^(?:Expo|Exponent)PushToken\[[A-Za-z0-9_-]{10,200}\]$/) }).strict(),
 } as const;
 export type Method = keyof typeof methods;
 export type Params<M extends Method> = z.input<(typeof methods)[M]>;

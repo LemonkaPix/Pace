@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { MAX_MESSAGE_BYTES, VERSION, parseRequest, type Pairing, type Response } from './protocol.js';
 import { isPrivateAddress, lanAddresses, remoteLock, RemoteIdentity } from './security.js';
 import type { RemoteDomain } from './domain.js';
+import { PushRegistry } from './push.js';
 
 export type RemoteLog = { kind: 'host' | 'paired' | 'connected' | 'disconnected' | 'request' | 'response' | 'error' | 'event'; message: string };
 export type RemoteHost = { address: string; pairing: Pairing; close(): Promise<void>; newPairing(): Pairing };
@@ -20,9 +21,11 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
   let bonjour: Bonjour | undefined;
   let sockets: WebSocketServer | undefined;
   let unsubscribe: (() => void) | undefined;
+  let unsubscribePush: (() => void) | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const identity = await RemoteIdentity.open(options.baseDir);
+    const pushes = await PushRegistry.open(options.baseDir, message => log('error', message));
     const rates = new Map<string, { at: number; count: number }>();
     const allowed = (request: IncomingMessage): boolean => {
       const remote = request.socket.remoteAddress ?? '';
@@ -80,9 +83,13 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
             if (request.method === 'devices.list') data = identity.list();
             else if (request.method === 'devices.revoke') {
               await identity.revoke(request.params.deviceId);
+              await pushes.revoke(request.params.deviceId);
               // Invalidate all established connections, including TLS-resumed sessions.
               for (const [peer, info] of clients) if (info.id === request.params.deviceId) peer.close(1008, 'Device revoked');
               data = { revoked: true };
+            } else if (request.method === 'notifications.register') {
+              await pushes.register(id, request.params.token);
+              data = { registered: true };
             } else data = await options.domain.handle(request, id);
             send(ws, { v: VERSION, id: requestId, ok: true, data });
             log('response', `${requestId} completed.`);
@@ -111,6 +118,7 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
       log('event', `Session changed: ${event.sessionId} (${event.cursor}).`);
       for (const [ws, client] of clients) if (identity.authorized(client.socket) === client.id) send(ws, event);
     });
+    unsubscribePush = options.domain.subscribeNotifications(event => { void pushes.send(event, new Set(identity.list().map(device => device.id))); });
     heartbeat = setInterval(() => {
       for (const [ws, client] of clients) {
         if (!client.alive || identity.authorized(client.socket) !== client.id) { log('error', `Device heartbeat or authorization lost: ${client.id}.`); ws.terminate(); continue; }
@@ -139,7 +147,7 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
       close() {
         return closing ??= (async () => {
           log('host', 'Remote host stopping.');
-          identity.invalidateCode(); unsubscribe?.(); if (heartbeat) clearInterval(heartbeat);
+          identity.invalidateCode(); unsubscribe?.(); unsubscribePush?.(); if (heartbeat) clearInterval(heartbeat);
           bonjour?.unpublishAll(); bonjour?.destroy();
           for (const ws of clients.keys()) ws.terminate();
           sockets?.close();
@@ -157,7 +165,7 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
     log('host', `Remote host listening on ${address}. Pairing code valid for 2 minutes.`);
     return host;
   } catch (error) {
-    unsubscribe?.(); if (heartbeat) clearInterval(heartbeat);
+    unsubscribe?.(); unsubscribePush?.(); if (heartbeat) clearInterval(heartbeat);
     bonjour?.destroy(); for (const ws of sockets?.clients ?? []) ws.terminate(); sockets?.close(); server?.close();
     await release(); throw error;
   }

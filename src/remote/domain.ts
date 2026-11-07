@@ -16,6 +16,7 @@ import { configuredSkills, enabledSkills } from "../core/system/skills.js";
 import { readAvailableModels } from "../integrations/models.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import { validRoute } from "../shared/config.js";
+import type { PushEvent } from "./push.js";
 import type { Config, OperationIntent, QueuedOperation, Session as PaceSession } from "../shared/types.js";
 import { VERSION, MAX_TEXT_BYTES, parseRequest, type ActivityEntry, type SessionSummary, type Method, type PendingInteraction, type RemoteEvent, type Request, type Route, type Session as RemoteSession, type Snapshot } from "./protocol.js";
 
@@ -41,6 +42,7 @@ export class RemoteDomain {
   private revision = 0;
   private readonly epoch = randomUUID();
   private readonly listeners = new Set<(event: RemoteEvent) => void>();
+  private readonly pushListeners = new Set<(event: PushEvent) => void>();
   private readonly roots = new Map<string, string>();
   private readonly sessions = new Map<string, PaceSession>();
   private readonly active = new Map<string, Active>();
@@ -115,6 +117,7 @@ export class RemoteDomain {
         this.active.delete(session.id);
         for (const [id, item] of this.interactions) if (item.sessionId === session.id) this.removeInteraction(id);
         this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session);
+        if (!session.turns.at(-1)?.cancelled && !signal?.aborted && !controller?.signal.aborted) this.notify(session, session.turns.at(-1)?.failed || !completed ? 'failed' : 'completed');
         if (completed && !this.pendingLaunch.has(session.id)) await this.drain(session);
       }
     }) as Orchestrator["turn"];
@@ -122,6 +125,8 @@ export class RemoteDomain {
   }
 
   subscribe(listener: (event: RemoteEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  subscribeNotifications(listener: (event: PushEvent) => void) { this.pushListeners.add(listener); return () => this.pushListeners.delete(listener); }
+  private notify(session: PaceSession, kind: PushEvent['kind']) { for (const listener of this.pushListeners) listener({ projectPath: session.projectPath, sessionId: session.id, kind }); }
   private log(message: string): void { try { this.onLog?.(message); } catch { /* Logging cannot interrupt a turn. */ } }
   /** Resume queued operations after session loading has recovered interrupted attempts. */
   async resumeQueues(): Promise<void> {
@@ -138,7 +143,7 @@ export class RemoteDomain {
     for (const controller of this.controllers.values()) controller.abort();
     while (this.launches.size) await Promise.allSettled([...this.launches]);
     for (const id of this.interactions.keys()) this.removeInteraction(id, "expired");
-    this.interactions.clear(); this.listeners.clear();
+    this.interactions.clear(); this.listeners.clear(); this.pushListeners.clear();
     await this.history.close();
   }
 
@@ -232,7 +237,7 @@ export class RemoteDomain {
       case "diff.list": return this.diffList(request.params.projectId, request.params.sessionId, request.params.editId);
       case "diff.read": return this.diffRead(request.params.projectId, request.params.sessionId, request.params.editId, request.params.path, request.params.offset);
       case "diff.change": return this.diffChange(request.params.projectId, request.params.sessionId, request.params.editId, request.params.path, request.params.direction);
-      case "devices.list": case "devices.revoke": throw new Error("Device administration is handled by host transport.");
+      case "devices.list": case "devices.revoke": case "notifications.register": throw new Error("Device administration is handled by host transport.");
     }
   }
 
@@ -314,6 +319,7 @@ export class RemoteDomain {
     const timer = setTimeout(() => this.removeInteraction(value.id, "expired"), 10 * 60 * 1000);
     if (value.kind === "question") this.interactionIds.set(value.questions?.[0]?.id ?? "", value.id);
     this.interactions.set(value.id, { public: value, respond: respond as (answer: unknown) => void, sessionId: session.id, timer });
+    this.notify(session, 'input');
     this.history.requested(session, value);
   }
   private answer(sessionId: string, id: string, decision?: "accept" | "decline", answers?: Record<string, { answers: string[] }>) {
@@ -427,7 +433,7 @@ export class RemoteDomain {
           latest.queuedPrompts = latest.queuedPrompts?.filter(value => typeof value === "string" || value.id !== item.id);
         }, false);
         completed = true;
-      } catch (error) { this.log(`[${source.id}] Operation failed: ${String(error)}`); this.launchErrors.set(source.id, String(error)); this.emit(source); }
+      } catch (error) { this.log(`[${source.id}] Operation failed: ${String(error)}`); this.launchErrors.set(source.id, String(error)); this.emit(source); this.notify(source, 'failed'); }
       finally { this.pendingLaunch.delete(source.id); if (completed && !this.disposed) await this.drain(source); }
     })();
     this.launches.add(work);
