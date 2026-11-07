@@ -145,7 +145,7 @@ async function fixture(run?: Orchestrator["turn"]) {
   await store.save(value);
   const orchestrator = { turn: run ?? (async () => ({ result: "Done" })) } as unknown as Orchestrator;
   const domain = new RemoteDomain(store, orchestrator, [root]); domains.push(domain);
-  const request = (method: Method, params: Record<string, unknown> = {}) => domain.handle(parseRequest({ v: 1, id: randomUUID(), method, params: { ...(method === "sessions.list" ? {} : { sessionId: value.id }), projectId: projectKey(root), ...params } }), "device");
+  const request = (method: Method, params: Record<string, unknown> = {}) => domain.handle(parseRequest({ v: 1, id: randomUUID(), method, params: { ...(["sessions.list", "sessions.search"].includes(method) ? {} : { sessionId: value.id }), projectId: projectKey(root), ...params } }), "device");
   return { domain, store, value, request, orchestrator };
 }
 
@@ -160,6 +160,19 @@ it("lists accurate turn totals with a bounded summary and pages retained activit
   const second = await request("sessions.activity", { offset: 1 }) as ActivityPage;
   const detail = await request("sessions.activityText", { activityId: second.items[0]!.id }) as ActivityTextPage;
   expect(detail.text).toContain("Passed");
+});
+
+it("renames, pins, archives, searches full messages, and deletes an idle conversation", async () => {
+  const { request, store, value } = await fixture();
+  value.turns[0]!.result = "A unique hidden message";
+  await store.saveChanges(value);
+  expect(await request("sessions.search", { query: "unique hidden" })).toEqual([value.id]);
+  await request("sessions.update", { title: "Renamed", pinned: true, archived: true });
+  expect((await request("sessions.list") as SessionSummary[])[0]).toMatchObject({ title: "Renamed", pinned: true, archived: true });
+  expect((await store.load(value.projectPath, value.id))?.title).toBe("Renamed");
+  await request("sessions.delete");
+  expect(await request("sessions.list")).toEqual([]);
+  expect(await store.load(value.projectPath, value.id)).toBeUndefined();
 });
 
 it("distinguishes unnamed sessions using public prompts consistently in list and snapshot titles", async () => {

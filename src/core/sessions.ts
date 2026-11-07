@@ -484,4 +484,15 @@ export class PaceStore {
       return this.write(latest, revision, activate);
     });
   }
+  /** Remove an idle conversation and its saved artifacts through the same per-session write queue. */
+  async delete(identity: SessionIdentity): Promise<void> {
+    await this.serial(identity, async () => {
+      if (!await this.readSaved(identity)) throw new Error("Pace session not found");
+      const activePath = join(this.sessionDir(identity.projectPath), "active.json");
+      const active = await readFile(activePath, "utf8").then(JSON.parse).catch(() => undefined);
+      await rm(this.key(identity));
+      await rm(this.conversationDir(identity.projectPath, identity.id), { recursive: true, force: true });
+      if (isRecord(active) && active.id === identity.id) await rm(activePath, { force: true });
+    });
+  }
 }

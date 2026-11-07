@@ -148,10 +148,40 @@ export class RemoteDomain {
     switch (request.method) {
       case "projects.list": return [...this.roots].map(([id, path]) => ({ id, path, exists: true }));
       case "sessions.list": return this.listSessions(await this.project(request.params.projectId));
+      case "sessions.search": {
+        const path = await this.project(request.params.projectId);
+        const query = request.params.query.toLocaleLowerCase();
+        const matches: string[] = [];
+        const files = (await readdir(this.store.sessionDir(path)).catch(error => missing(error) ? [] : Promise.reject(error))).filter(name => UUID.test(name.slice(0, -5)) && name.endsWith(".json"));
+        for (const file of files) {
+          const session = await this.loadSession(path, file.slice(0, -5));
+          if (session && (sessionTitle(session)?.toLocaleLowerCase().includes(query) || session.turns.some(turn => `${turn.displayPrompt ?? turn.prompt} ${turn.result}`.toLocaleLowerCase().includes(query)))) matches.push(session.id);
+        }
+        return matches;
+      }
       case "sessions.create": return this.serial(request.params.projectId, async () => {
         const path = await this.project(request.params.projectId); const config = await this.store.loadConfig();
         const session = newSession(path, config.routingMode, request.params.kind, config.autoLaunchSkills);
         await this.store.saveChanges(session); this.sessions.set(session.id, session); this.emit(session); return { id: session.id };
+      });
+      case "sessions.update": return this.serial(request.params.sessionId, async () => {
+        const { projectId, sessionId, title, pinned, archived } = request.params;
+        const session = await this.session(projectId, sessionId);
+        const updated = await this.store.update(session, latest => {
+          if (title !== undefined) latest.title = title;
+          if (pinned !== undefined) latest.pinned = pinned;
+          if (archived !== undefined) latest.archived = archived;
+        }, false);
+        session.title = updated.title; session.pinned = updated.pinned; session.archived = updated.archived;
+        this.emit(updated);
+        return sessionSummary(updated);
+      });
+      case "sessions.delete": return this.serial(request.params.sessionId, async () => {
+        const session = await this.session(request.params.projectId, request.params.sessionId);
+        if (this.active.has(session.id) || this.pendingLaunch.has(session.id) || this.bridge?.busy(session.id) || this.interactions.size && [...this.interactions.values()].some(item => item.sessionId === session.id)) throw new Error("Stop the active conversation before deleting it.");
+        await this.store.delete(session);
+        this.sessions.delete(session.id); this.diskSessions.delete(session.id); this.emit(session);
+        return { deleted: true };
       });
       case "sessions.snapshot": return this.snapshot(request.params.projectId, request.params.sessionId, request.params.turnOffset, request.params.latest, request.params.transcriptRevision);
       case "sessions.activity": {
@@ -325,7 +355,15 @@ export class RemoteDomain {
     const session = await this.session(projectId, sessionId); if (!UUID.test(editId) || ![...session.turns, ...(session.undoneTurns ?? [])].some(t => t.fileEdits === editId)) throw new Error("File edit does not belong to this conversation.");
     const edits = new FileEdits(this.store, session); return { session, edits, record: await edits.load(editId) };
   }
-  private async diffList(projectId: string, sessionId: string, editId: string) { const { record } = await this.edit(projectId, sessionId, editId); return record.changes.map(({ path, undone }) => ({ path, undone })); }
+  private async diffList(projectId: string, sessionId: string, editId: string) {
+    const { edits, record } = await this.edit(projectId, sessionId, editId);
+    return Promise.all(record.changes.map(async change => {
+      const lines = (await edits.diff(change)).split("\n");
+      return { path: change.path, undone: change.undone,
+        additions: lines.filter(line => line.startsWith("+") && !line.startsWith("+++")).length,
+        deletions: lines.filter(line => line.startsWith("-") && !line.startsWith("---")).length };
+    }));
+  }
   private async diffRead(projectId: string, sessionId: string, editId: string, path: string, offset: number) {
     const { edits, record } = await this.edit(projectId, sessionId, editId); const change = record.changes.find(item => item.path === path); if (!change) throw new Error("File is not part of this turn.");
     const lines = (await edits.diff(change)).split("\n"); const start = Math.min(Math.max(offset, 0), lines.length); let end = start, size = 0;
