@@ -132,5 +132,5 @@ export function sessionSummary(session: Session, live: { running?: boolean; wait
   const latestActivity = live.error ?? (live.running ? latest?.text?.slice(0, 200) : lastTurn?.cancelled ? "Cancelled" : lastTurn?.result?.slice(0, 200));
   const title = sessionTitle(session, live.prompt);
   return { id: session.id, ...(title ? { title } : {}), pinned: !!session.pinned, archived: !!session.archived, ...(session.kind ? { kind: session.kind } : {}), projectPath: session.projectPath, routingMode: session.routingMode, route: wireRoute(session.route), updatedAt: session.updatedAt, totalTurns: session.turns.length,
-    state: live.waiting ? "waiting" : live.running ? "running" : waiting ? "waiting" : failed ? "failed" : lastTurn?.cancelled ? "cancelled" : lastTurn ? "completed" : "idle", ...(latestActivity ? { latestActivity: latestActivity.slice(0, 200) } : {}) };
+    state: live.waiting ? "waiting" : live.running ? "running" : lastTurn?.cancelled ? "cancelled" : waiting ? "waiting" : failed ? "failed" : lastTurn ? "completed" : "idle", ...(latestActivity ? { latestActivity: latestActivity.slice(0, 200) } : {}) };
 }

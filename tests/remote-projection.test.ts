@@ -29,6 +29,8 @@ it("shows a cancelled turn as cancelled rather than failed", () => {
   value.turns[0]!.cancelled = true;
   value.attempts = [attempt({ status: "cancelled" })];
   expect(sessionSummary(value)).toMatchObject({ state: "cancelled", latestActivity: "Cancelled" });
+  value.attempts[0]!.status = "failed";
+  expect(sessionSummary(value).state).toBe("cancelled");
 });
 
 it("keeps transcript hashes stable across activity and plan changes, but catches same-length text and metadata edits", () => {
