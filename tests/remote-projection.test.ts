@@ -211,9 +211,11 @@ it("mirrors live tools beyond four chat rows and reports running versus waiting 
   try {
     for (let index = 0; index < 7; index++) progress({ kind: "activity", id: `tool-${index}`, category: "command", title: `Build step ${index}`, detail: `Output ${index}`, completed: false });
     progress({ kind: "activity", id: "tool-0", category: "command", title: "Build step 0", detail: "Passed", completed: true, outcome: "success" });
+    progress({ kind: "message", id: "reply-1", text: "I found the issue.", completed: true });
     const snapshot = await request("sessions.snapshot") as Snapshot;
-    expect(snapshot.activity?.items.filter(item => item.id.startsWith("live:"))).toHaveLength(7);
+    expect(snapshot.activity?.items.filter(item => item.id.startsWith("live:"))).toHaveLength(8);
     expect(snapshot.activity?.items.find(item => item.id === "live:tool-0")?.text).toContain("Passed");
+    expect(snapshot.activity?.items.find(item => item.id === "live:reply-1")).toMatchObject({ kind: "answer", title: "Agent response", text: "I found the issue." });
     expect((await request("sessions.list") as SessionSummary[])[0]?.state).toBe("running");
     progress({ kind: "approval", command: "npm run build", respond: () => {} });
     expect((await request("sessions.list") as SessionSummary[])[0]?.state).toBe("waiting");
