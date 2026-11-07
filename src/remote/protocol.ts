@@ -13,6 +13,9 @@ const methods = {
   'projects.list': z.object({}).strict(),
   'sessions.list': z.object({ projectId: target.projectId }).strict(),
   'sessions.create': z.object({ projectId: target.projectId, kind: z.enum(['normal', 'planning']).default('normal') }).strict(),
+  'sessions.update': z.object({ ...target, title: z.string().trim().min(1).max(120).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() }).strict(),
+  'sessions.delete': z.object({ ...target }).strict(),
+  'sessions.search': z.object({ projectId: target.projectId, query: z.string().trim().min(2).max(120) }).strict(),
   'sessions.snapshot': z.object({ ...target, turnOffset: z.number().int().min(0).default(0), latest: z.boolean().optional(), transcriptRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict(),
   'sessions.activity': z.object({ ...target, offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(100).default(40) }).strict(),
   'sessions.activityText': z.object({ ...target, activityId: z.string().min(1).max(300), offset: z.number().int().min(0).default(0) }).strict(),
@@ -56,14 +59,14 @@ export type PendingInteraction = {
 };
 export type Turn = { prompt: string; displayPrompt?: string; result: string; at: string; fileEdits?: string; artifacts?: string[]; failed?: boolean; cancelled?: boolean; route?: Route; durationMs?: number; usage?: Record<string, number> };
 export type Session = {
-  id: string; title?: string; kind?: 'normal' | 'planning'; plan?: string; planArtifact?: string;
+  id: string; title?: string; pinned?: boolean; archived?: boolean; kind?: 'normal' | 'planning'; plan?: string; planArtifact?: string;
   projectPath: string; routingMode: 'auto' | 'manual'; route: Route; updatedAt: string;
   turns: Turn[]; queuedPrompts?: string[]; tasks?: { id: string; text: string; completed: boolean; source: string }[];
   queuedOperations?: { id: string; text: string; intent?: string; sessionId: string; taskId?: string; role: string; sourceSideId?: string }[];
   sideAnswers?: { id: string; taskId?: string; attemptId: string; question: string; snapshotAt: string; route: Route; result?: string; error?: string; adopted?: boolean }[];
   contextByThread?: Record<string, { tokens: number; windowTokens: number; model?: string }>; threadId?: string;
 };
-export type SessionSummary = Pick<Session, 'id' | 'title' | 'kind' | 'projectPath' | 'routingMode' | 'route' | 'updatedAt'> & { totalTurns: number; state: 'running' | 'waiting' | 'idle' | 'failed' | 'completed' | 'cancelled'; latestActivity?: string };
+export type SessionSummary = Pick<Session, 'id' | 'title' | 'pinned' | 'archived' | 'kind' | 'projectPath' | 'routingMode' | 'route' | 'updatedAt'> & { totalTurns: number; state: 'running' | 'waiting' | 'idle' | 'failed' | 'completed' | 'cancelled'; latestActivity?: string };
 export type ActivityEntry = { id: string; kind: 'attempt' | 'activity' | 'tasks' | 'answer' | 'artifacts' | 'decision' | 'steering' | 'side-answer' | 'workflow'; at: string; title: string; text?: string; status?: string; role?: string; attemptId?: string; paths?: string[]; route?: Route; truncated?: boolean };
 export type ActivityPage = { items: ActivityEntry[]; offset: number; nextOffset: number | null; total: number };
 export type ActivityTextPage = { activityId: string; offset: number; nextOffset: number | null; totalChars: number; text: string };
@@ -71,5 +74,5 @@ export type Workflow = { generation: number; shape: string; stage: string; statu
 export type Snapshot = { cursor: string; transcriptRevision: string; activity?: ActivityPage; workflow?: Workflow; session: Session; turnOffset: number; totalTurns: number; operationError?: string; active?: { prompt: string; status: string; activities: string[] }; interactions: PendingInteraction[]; approvalMode: z.infer<typeof approvalModeSchema> };
 export type TurnTextPage = { transcriptRevision: string; field: 'prompt' | 'displayPrompt' | 'result'; offset: number; nextOffset: number | null; totalChars: number; text: string };
 export type Project = { id: string; path: string; exists: boolean };
-export type FileChange = { path: string; undone: boolean };
+export type FileChange = { path: string; undone: boolean; additions: number; deletions: number };
 export type TextPage = { path: string; text: string; offset: number; nextOffset: number | null; totalLines: number };

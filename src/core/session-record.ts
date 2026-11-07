@@ -298,6 +298,8 @@ export function parseSession(value: unknown, project: string): Session | undefin
     typeof value.id !== "string" ||
     !/^[0-9a-f-]{36}$/.test(value.id) ||
     (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
+    (value.pinned !== undefined && typeof value.pinned !== "boolean") ||
+    (value.archived !== undefined && typeof value.archived !== "boolean") ||
     value.projectPath !== project ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
@@ -364,6 +366,8 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     typeof value.id !== "string" ||
     !/^[0-9a-f-]{36}$/.test(value.id) ||
     (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
+    (value.pinned !== undefined && typeof value.pinned !== "boolean") ||
+    (value.archived !== undefined && typeof value.archived !== "boolean") ||
     value.projectPath !== project ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" || !validNewFields(value)
@@ -403,6 +407,8 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     id: value.id,
     kind: value.kind === "planning" ? "planning" : "normal",
     title: typeof value.title === "string" ? value.title : undefined,
+    pinned: value.pinned === true,
+    archived: value.archived === true,
     projectPath: project,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,

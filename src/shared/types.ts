@@ -226,6 +226,8 @@ export type Session = {
   planRoute?: Route;
   verifierThreadId?: string;
   title?: string;
+  pinned?: boolean;
+  archived?: boolean;
   projectPath: string;
   threadId?: string;
   threadTurnCount?: number;
