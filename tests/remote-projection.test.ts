@@ -173,6 +173,7 @@ it("renames, pins, archives, searches full messages, and deletes an idle convers
   await request("sessions.delete");
   expect(await request("sessions.list")).toEqual([]);
   expect(await store.load(value.projectPath, value.id)).toBeUndefined();
+  await expect(request("sessions.snapshot")).rejects.toThrow("deleted");
 });
 
 it("distinguishes unnamed sessions using public prompts consistently in list and snapshot titles", async () => {

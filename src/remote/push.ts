@@ -7,7 +7,8 @@ export type PushEvent = { projectPath: string; sessionId: string; kind: 'input' 
 
 /** Tokens are scoped to paired device IDs and never included in remote device listings. */
 export class PushRegistry {
-  private constructor(private readonly file: string, private readonly tokens: Record<string, string>, private readonly log: (message: string) => void) {}
+  private saving = Promise.resolve();
+  private constructor(private readonly file: string, private tokens: Record<string, string>, private readonly log: (message: string) => void) {}
   static async open(baseDir: string, log: (message: string) => void): Promise<PushRegistry> {
     const file = join(baseDir, 'remote', 'push.json');
     let tokens: Record<string, string> = {};
@@ -18,9 +19,16 @@ export class PushRegistry {
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     return new PushRegistry(file, tokens, log);
   }
-  async register(deviceId: string, token: string) { this.tokens[deviceId] = token; await this.save(); }
-  async revoke(deviceId: string) { delete this.tokens[deviceId]; await this.save(); }
-  private async save() { await atomicJson(this.file, this.tokens); await chmod(this.file, 0o600); }
+  async register(deviceId: string, token: string) { await this.mutate(next => { next[deviceId] = token; }); }
+  async revoke(deviceId: string) { await this.mutate(next => { delete next[deviceId]; }); }
+  private async mutate(change: (next: Record<string, string>) => void) {
+    const pending = this.saving.then(async () => {
+      const next = { ...this.tokens }; change(next);
+      await atomicJson(this.file, next); await chmod(this.file, 0o600); this.tokens = next;
+    });
+    this.saving = pending.catch(() => {});
+    await pending;
+  }
   async send(event: PushEvent, pairedIds: Set<string>) {
     const to = Object.entries(this.tokens).filter(([id]) => pairedIds.has(id)).map(([, token]) => token);
     if (!to.length) return;
@@ -32,7 +40,12 @@ export class PushRegistry {
         body: JSON.stringify(to.map(token => ({ to: token, title, body: 'Open the conversation in Pace Remote.', data, channelId: 'pace-updates' }))),
         signal: AbortSignal.timeout(10000),
       });
-      if (!response.ok) this.log(`Push service rejected a notification (${response.status}).`);
+      if (!response.ok) { this.log(`Push service rejected a notification (${response.status}).`); return; }
+      const result: unknown = await response.json();
+      if (result && typeof result === 'object' && 'data' in result) {
+        const tickets = Array.isArray(result.data) ? result.data : [result.data];
+        if (tickets.some(ticket => ticket && typeof ticket === 'object' && ticket.status === 'error')) this.log('Push service rejected a device token.');
+      }
     } catch { this.log('Push notification delivery failed.'); }
   }
 }
