@@ -159,9 +159,14 @@ export class RemoteDomain {
         const query = request.params.query.toLocaleLowerCase();
         const matches: string[] = [];
         const files = (await readdir(this.store.sessionDir(path)).catch(error => missing(error) ? [] : Promise.reject(error))).filter(name => UUID.test(name.slice(0, -5)) && name.endsWith(".json"));
-        for (const file of files) {
-          const session = await this.loadSession(path, file.slice(0, -5));
-          if (session && (sessionTitle(session)?.toLocaleLowerCase().includes(query) || session.turns.some(turn => `${turn.displayPrompt ?? turn.prompt} ${turn.result}`.toLocaleLowerCase().includes(query)))) matches.push(session.id);
+        for (let offset = 0; offset < files.length; offset += 4) {
+          const page = await Promise.all(files.slice(offset, offset + 4).map(async file => {
+            try {
+              const session = parseSession(JSON.parse(await readFile(resolve(this.store.sessionDir(path), file), 'utf8')), path);
+              return session && (sessionTitle(session)?.toLocaleLowerCase().includes(query) || session.turns.some(turn => `${turn.displayPrompt ?? turn.prompt} ${turn.result}`.toLocaleLowerCase().includes(query))) ? session.id : undefined;
+            } catch { return undefined; }
+          }));
+          matches.push(...page.filter((id): id is string => !!id));
         }
         return matches;
       }
