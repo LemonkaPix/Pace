@@ -98,7 +98,7 @@ it('records full turn progress and results independently of the screen', async (
 it('pairs over TLS, logs connection/request/error/disconnect events, renews codes and hands over ownership', async () => {
   const root = await directory();
   const events: RemoteLog[] = [];
-  const domain = { subscribe: () => () => {}, resumeQueues: async () => {}, close: vi.fn(async () => {}), handle: vi.fn(async () => []) } as unknown as RemoteDomain;
+  const domain = { subscribe: () => () => {}, subscribeNotifications: () => () => {}, resumeQueues: async () => {}, close: vi.fn(async () => {}), handle: vi.fn(async () => []) } as unknown as RemoteDomain;
   const onClose = vi.fn();
   const host = await startRemoteHost({ baseDir: root, address: '127.0.0.1', port: 0, allowTestAddress: true, advertise: false, domain, onLog: event => events.push(event), onClose });
   hosts.push(host);
@@ -119,6 +119,13 @@ it('pairs over TLS, logs connection/request/error/disconnect events, renews code
   const response = new Promise<string>(resolve => ws.once('message', value => resolve(value.toString())));
   ws.send(JSON.stringify({ v: 1, id: randomUUID(), method: 'projects.list', params: {} }));
   expect(JSON.parse(await response).ok).toBe(true);
+  const registered = new Promise<string>(resolve => ws.once('message', value => resolve(value.toString())));
+  ws.send(JSON.stringify({ v: 1, id: randomUUID(), method: 'notifications.register', params: { token: 'ExpoPushToken[abcdefghij1234567890]' } }));
+  expect(JSON.parse(await registered).data).toEqual({ registered: true });
+  expect(await readFile(join(root, 'remote', 'push.json'), 'utf8')).toContain('ExpoPushToken[abcdefghij1234567890]');
+  const devices = new Promise<string>(resolve => ws.once('message', value => resolve(value.toString())));
+  ws.send(JSON.stringify({ v: 1, id: randomUUID(), method: 'devices.list', params: {} }));
+  expect(await devices).not.toContain('ExpoPushToken');
   const invalid = new Promise<string>(resolve => ws.once('message', value => resolve(value.toString())));
   ws.send('{invalid'); expect(JSON.parse(await invalid).ok).toBe(false);
   ws.close(); await new Promise<void>(resolve => ws.once('close', () => resolve()));
@@ -131,7 +138,7 @@ it('pairs over TLS, logs connection/request/error/disconnect events, renews code
 
 it('releases the listener and host lock even when interaction history cannot flush at shutdown', async () => {
   const root = await directory();
-  const domain = { subscribe: () => () => {}, resumeQueues: async () => {}, close: vi.fn(async () => { throw new Error('Remote interaction history unavailable'); }) } as unknown as RemoteDomain;
+  const domain = { subscribe: () => () => {}, subscribeNotifications: () => () => {}, resumeQueues: async () => {}, close: vi.fn(async () => { throw new Error('Remote interaction history unavailable'); }) } as unknown as RemoteDomain;
   const onClose = vi.fn();
   const host = await startRemoteHost({ baseDir: root, address: '127.0.0.1', port: 0, allowTestAddress: true, advertise: false, domain, onClose });
   await expect(host.close()).rejects.toThrow('Remote interaction history unavailable');
