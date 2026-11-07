@@ -63,7 +63,7 @@ export type Session = {
   sideAnswers?: { id: string; taskId?: string; attemptId: string; question: string; snapshotAt: string; route: Route; result?: string; error?: string; adopted?: boolean }[];
   contextByThread?: Record<string, { tokens: number; windowTokens: number; model?: string }>; threadId?: string;
 };
-export type SessionSummary = Pick<Session, 'id' | 'title' | 'kind' | 'projectPath' | 'routingMode' | 'route' | 'updatedAt'> & { totalTurns: number; state: 'running' | 'waiting' | 'idle' | 'failed' | 'completed'; latestActivity?: string };
+export type SessionSummary = Pick<Session, 'id' | 'title' | 'kind' | 'projectPath' | 'routingMode' | 'route' | 'updatedAt'> & { totalTurns: number; state: 'running' | 'waiting' | 'idle' | 'failed' | 'completed' | 'cancelled'; latestActivity?: string };
 export type ActivityEntry = { id: string; kind: 'attempt' | 'activity' | 'tasks' | 'answer' | 'artifacts' | 'decision' | 'steering' | 'side-answer' | 'workflow'; at: string; title: string; text?: string; status?: string; role?: string; attemptId?: string; paths?: string[]; route?: Route; truncated?: boolean };
 export type ActivityPage = { items: ActivityEntry[]; offset: number; nextOffset: number | null; total: number };
 export type ActivityTextPage = { activityId: string; offset: number; nextOffset: number | null; totalChars: number; text: string };

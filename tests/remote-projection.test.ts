@@ -23,12 +23,12 @@ function session(): Session {
   return value;
 }
 
-it("shows a cancelled turn as idle rather than failed", () => {
+it("shows a cancelled turn as cancelled rather than failed", () => {
   const value = session();
   value.turns[0]!.failed = true;
   value.turns[0]!.cancelled = true;
   value.attempts = [attempt({ status: "cancelled" })];
-  expect(sessionSummary(value)).toMatchObject({ state: "idle", latestActivity: "Cancelled" });
+  expect(sessionSummary(value)).toMatchObject({ state: "cancelled", latestActivity: "Cancelled" });
 });
 
 it("keeps transcript hashes stable across activity and plan changes, but catches same-length text and metadata edits", () => {

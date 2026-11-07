@@ -81,8 +81,9 @@ export class RemoteDomain {
           if (active.events.size > 200) active.events.delete(active.events.keys().next().value!);
         }
         if (event.kind === "message") {
-          const previous = active.events.get(event.id);
-          active.events.set(event.id, { id: `live:${event.id}`, at: previous?.at ?? new Date().toISOString(), kind: "answer", title: "Agent response", text: event.text.slice(0, 32000), status: event.completed ? "completed" : "running" });
+          const id = event.id ?? `message:${active.events.size}`;
+          const previous = active.events.get(id);
+          active.events.set(id, { id: `live:${id}`, at: previous?.at ?? new Date().toISOString(), kind: "answer", title: "Agent response", text: event.text.slice(0, 32000), status: event.completed ? "completed" : "running" });
           if (active.events.size > 200) active.events.delete(active.events.keys().next().value!);
         }
         if (event.kind === "approval") {
