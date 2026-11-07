@@ -39,7 +39,7 @@ export function transcriptRevision(session: Session): string {
 
 export function workflowProjection(session: Session): Workflow | undefined {
   const workflow = session.activeTask?.workflow;
-  return workflow ? { generation: workflow.generation, shape: workflow.shape, stage: workflow.stage, ...(workflow.status ? { status: workflow.status } : {}) } : undefined;
+  return workflow ? { generation: workflow.generation, shape: workflow.shape, stage: workflow.stage, ...(workflow.status ? { status: workflow.status } : {}), ...(session.activeTask?.id ? { taskId: session.activeTask.id } : {}) } : undefined;
 }
 
 export function sessionTitle(session: Session, activePrompt?: string): string | undefined {

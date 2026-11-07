@@ -45,6 +45,7 @@ export class RemoteDomain {
   private readonly pushListeners = new Set<(event: PushEvent) => void>();
   private readonly roots = new Map<string, string>();
   private readonly sessions = new Map<string, PaceSession>();
+  private readonly deleted = new Set<string>();
   private readonly active = new Map<string, Active>();
   private readonly history: RemoteInteractionHistory;
   private readonly diskSessions = new Map<string, { mtimeNs: bigint; ctimeNs: bigint; ino: bigint; size: bigint; session: Promise<PaceSession | undefined> }>();
@@ -185,7 +186,7 @@ export class RemoteDomain {
         const session = await this.session(request.params.projectId, request.params.sessionId);
         if (this.active.has(session.id) || this.pendingLaunch.has(session.id) || this.bridge?.busy(session.id) || this.interactions.size && [...this.interactions.values()].some(item => item.sessionId === session.id)) throw new Error("Stop the active conversation before deleting it.");
         await this.store.delete(session);
-        this.sessions.delete(session.id); this.diskSessions.delete(session.id); this.emit(session);
+        this.deleted.add(session.id); this.sessions.delete(session.id); this.diskSessions.delete(session.id); this.emit(session);
         return { deleted: true };
       });
       case "sessions.snapshot": return this.snapshot(request.params.projectId, request.params.sessionId, request.params.turnOffset, request.params.latest, request.params.transcriptRevision);
@@ -248,6 +249,7 @@ export class RemoteDomain {
   }
   private async session(projectId: string, sessionId: string) {
     if (!UUID.test(sessionId)) throw new Error("Conversation not found.");
+    if (this.deleted.has(sessionId)) throw new Error("Conversation was deleted.");
     const path = await this.project(projectId); const current = this.bridge?.session(sessionId) ?? this.sessions.get(sessionId);
     const value = current?.projectPath === path && (this.bridge || this.active.has(sessionId) || this.pendingLaunch.has(sessionId)) ? current : await this.loadSession(path, sessionId);
     if (!value || value.projectPath !== path) throw new Error("Conversation not found in this project.");
